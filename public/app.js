@@ -1,0 +1,662 @@
+(function () {
+  'use strict';
+  const E = window.SmashEngine;
+  const A = window.Art;
+  const T = E.TYPES;
+  const app = document.getElementById('app');
+  const sheet = document.getElementById('sheet');
+  const toastEl = document.getElementById('toast');
+  const LS_SESSION = 'smashburger.session';
+  const LS_NAME = 'smashburger.name';
+
+  let session = null;
+  try { session = JSON.parse(localStorage.getItem(LS_SESSION)); } catch { /* ignore */ }
+  let view = null;
+  let es = null;
+  let ui = freshUi();
+  let sheetKind = null; // 'info' sheets survive state updates, 'ctx' sheets belong to the current move
+  let lastLogN = 0;
+  let wasMyTurn = false;
+
+  function freshUi() {
+    return { sel: null, mode: null, steal: null, dig: null };
+  }
+
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // ---------- Netzwerk ----------
+
+  async function post(path, body) {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let j = {};
+    try { j = await r.json(); } catch { /* ignore */ }
+    if (!r.ok || j.error) throw new Error(j.error || 'Verbindungsproblem');
+    return j;
+  }
+
+  function saveSession(s) {
+    session = s;
+    if (s) localStorage.setItem(LS_SESSION, JSON.stringify(s));
+    else localStorage.removeItem(LS_SESSION);
+  }
+
+  function connect() {
+    if (es) es.close();
+    const q = new URLSearchParams(session).toString();
+    es = new EventSource('/api/events?' + q);
+    es.onmessage = e => {
+      view = JSON.parse(e.data);
+      onView();
+    };
+    es.addEventListener('gone', () => {
+      es.close();
+      es = null;
+      saveSession(null);
+      view = null;
+      closeSheet();
+      toast('Du sitzt nicht mehr an diesem Tisch.');
+      render();
+    });
+  }
+
+  function send(action) {
+    ui = freshUi();
+    if (sheetKind === 'ctx') closeSheet();
+    render();
+    return post('/api/action', { ...session, action }).catch(e => toast(e.message));
+  }
+
+  // ---------- Hilfsfunktionen ----------
+
+  const game = () => view && view.game;
+  const me = () => view.you;
+  const myTurn = () => { const g = game(); return g && g.winner == null && g.current === me(); };
+  const myHand = () => game().players[me()].hand || [];
+  const recipesOf = g => g.recipes;
+
+  function findCard(id) {
+    return myHand().find(c => c.id === id);
+  }
+
+  function twinOf(card) {
+    return card && myHand().find(c => c.id !== card.id && c.t === card.t);
+  }
+
+  function canPair(card) {
+    const g = game();
+    return myTurn() && !g.pending && twinOf(card) && g.played + 2 <= E.MAX_PLAYS &&
+      g.players.some((p, i) => i !== me() && p.handCount > 0);
+  }
+
+  function stealSources() {
+    const g = game(), R = recipesOf(g), out = [];
+    g.players.forEach((src, sp) => src.tray.forEach((st, si) => {
+      const opts = stealOptions(sp, si);
+      if (opts.whole.length || opts.top.length) out.push(`${sp}:${si}`);
+    }));
+    return out;
+  }
+
+  function stealOptions(sp, si) {
+    const g = game(), R = recipesOf(g);
+    const st = g.players[sp].tray[si];
+    const res = { whole: [], top: [] };
+    const complete = E.completeRecipe(st, R) >= 0;
+    g.players.forEach((d, dp) => {
+      if (dp === sp) return;
+      if (complete && E.trayValid(E.withAdded(d.tray, st, 'new'), R)) res.whole.push(`${dp}:new`);
+      for (const tg of E.placeTargets(d.tray, [st[st.length - 1]], R)) res.top.push(`${dp}:${tg}`);
+    });
+    return res;
+  }
+
+  function targets() {
+    const g = game();
+    if (!g || !myTurn()) return new Set();
+    const R = recipesOf(g);
+    const mine = g.players[me()].tray;
+    if (ui.mode === 'place') {
+      const c = findCard(ui.sel);
+      return new Set(c ? E.placeTargets(mine, [c], R).map(t => `${me()}:${t}`) : []);
+    }
+    if (ui.mode === 'digPick') {
+      const c = g.trash.find(x => x.id === ui.dig);
+      return new Set(c ? E.placeTargets(mine, [c], R).map(t => `${me()}:${t}`) : []);
+    }
+    if (ui.mode === 'burn') {
+      const s = new Set();
+      g.players.forEach((p, i) => p.tray.forEach((_, si) => s.add(`${i}:${si}`)));
+      return s;
+    }
+    if (ui.mode === 'stealSrc') return new Set(stealSources());
+    if (ui.mode === 'stealDst') {
+      const o = stealOptions(ui.steal.from.player, ui.steal.from.stack);
+      return new Set(ui.steal.mode === 'whole' ? o.whole : o.top);
+    }
+    return new Set();
+  }
+
+  function stackLabel(st, R) {
+    const done = E.completeRecipe(st, R);
+    if (done >= 0) return `✓ ${E.RECIPES[done].name}`;
+    return E.candidates(st, R).map(i => E.RECIPES[i].name.replace(' Burger', '')).join(' / ');
+  }
+
+  // ---------- Rendering ----------
+
+  function render() {
+    document.body.classList.toggle('in-game', !!game());
+    if (!session || !view) return renderHome();
+    if (view.phase === 'lobby') return renderLobby();
+    renderGame();
+  }
+
+  function renderHome() {
+    const params = new URLSearchParams(location.search);
+    const room = (params.get('room') || '').toUpperCase();
+    app.innerHTML = `
+      <div class="home">
+        <div class="logo"><span>SMASH</span><span>BURGER</span></div>
+        <p class="tagline">Bereite deinen Burger zu.<br><b>Smashe die Konkurrenz.</b></p>
+        <div class="panel">
+          <label class="field">Dein Name
+            <input id="name" maxlength="18" autocomplete="nickname" value="${esc(localStorage.getItem(LS_NAME) || '')}" placeholder="z. B. Jean">
+          </label>
+          ${room ? '' : '<button class="btn primary big" data-do="create">Neuen Tisch eröffnen</button><div class="or">oder einem Tisch beitreten</div>'}
+          <div class="join-row">
+            <input id="code" maxlength="4" placeholder="CODE" value="${esc(room)}" autocapitalize="characters">
+            <button class="btn ${room ? 'primary' : ''}" data-do="join">Beitreten</button>
+          </div>
+          ${room ? '<button class="link" data-do="create">… oder lieber einen eigenen Tisch eröffnen</button>' : ''}
+        </div>
+        <div class="home-foot">
+          <span>2–6 Personen</span><span>ab 8</span><span>ca. 20 Min.</span>
+        </div>
+        <button class="link" data-do="rules">📖 Spielregeln</button>
+      </div>`;
+  }
+
+  function renderLobby() {
+    const isHost = view.host === me();
+    const n = view.players.length;
+    app.innerHTML = `
+      <div class="lobby">
+        <div class="logo small"><span>SMASH</span><span>BURGER</span></div>
+        <div class="panel">
+          <div class="code-box">
+            <div class="code-label">Tisch-Code</div>
+            <div class="code">${esc(view.code)}</div>
+            <button class="btn" data-do="share">🔗 Einladung teilen</button>
+          </div>
+          <h3>Am Tisch (${n}/6)</h3>
+          <ul class="plist">
+            ${view.players.map((p, i) => `
+              <li>
+                <span class="dot ${p.connected ? 'on' : ''}"></span>
+                <span class="pname">${esc(p.name)}${i === me() ? ' <small>(du)</small>' : ''}</span>
+                ${i === view.host ? '<span class="badge">👑 Gastgeber</span>' : ''}
+                ${p.isBot ? '<span class="badge">🤖</span>' : ''}
+                ${isHost && i !== me() ? `<button class="x" data-do="kick" data-i="${i}" aria-label="Entfernen">✕</button>` : ''}
+              </li>`).join('')}
+          </ul>
+          <p class="note">${n <= 3
+            ? '2–3 Spieler:innen: Alle <b>4 Burger</b> der Speisekarte fertigstellen.'
+            : '4–6 Spieler:innen: Nur die <b>ersten 3 Burger</b> der Speisekarte fertigstellen.'}</p>
+          ${isHost ? `
+            <div class="btn-row">
+              <button class="btn" data-do="addBot" ${n >= 6 ? 'disabled' : ''}>🤖 Bot dazu</button>
+              <button class="btn primary" data-do="start" ${n < 2 ? 'disabled' : ''}>Spiel starten</button>
+            </div>` : '<p class="wait">Warte, bis der Gastgeber das Spiel startet …</p>'}
+        </div>
+        <div class="btn-row center">
+          <button class="link" data-do="rules">📖 Regeln</button>
+          <button class="link" data-do="menu">📋 Speisekarte</button>
+          <button class="link danger" data-do="leave">Tisch verlassen</button>
+        </div>
+      </div>`;
+  }
+
+  function miniCard(c, size) {
+    const d = T[c.t];
+    return `<div class="mc ${d.kind}" title="${esc(d.name)}">${A.cardArt(c.t, size)}</div>`;
+  }
+
+  function trayHTML(p, pi, size, tg) {
+    const g = game(), R = recipesOf(g);
+    const stacks = p.tray.map((st, si) => {
+      const done = E.completeRecipe(st, R) >= 0;
+      const key = `${pi}:${si}`;
+      return `<div class="stack ${done ? 'done' : ''} ${tg.has(key) ? 'target' : ''}" data-do="stack" data-p="${pi}" data-s="${si}">
+        <div class="stack-cards">${st.map(c => miniCard(c, size)).join('')}</div>
+        <div class="stack-label">${esc(stackLabel(st, R))}</div>
+      </div>`;
+    });
+    if (tg.has(`${pi}:new`)) {
+      stacks.push(`<div class="stack new target" data-do="stack" data-p="${pi}" data-s="new"><div class="stack-cards">＋</div><div class="stack-label">Neuer Burger</div></div>`);
+    }
+    if (!stacks.length) stacks.push('<div class="empty-tray">Leeres Tablett</div>');
+    return `<div class="tray">${stacks.join('')}</div>`;
+  }
+
+  function handCard(c) {
+    const d = T[c.t];
+    const sel = ui.sel === c.id;
+    const twin = myTurn() && twinOf(c);
+    return `<button class="card ${d.kind} ${sel ? 'sel' : ''}" data-do="card" data-id="${c.id}">
+      <span class="corner">${twin ? '👯' : ''}</span>
+      <span class="art">${A.cardArt(c.t, d.kind === 'act' ? 52 : [0, 56, 40, 30, 26, 22][d.layers.length])}</span>
+      <span class="cname">${esc(d.name)}</span>
+    </button>`;
+  }
+
+  function hintHTML() {
+    const g = game();
+    const cur = g.players[g.current];
+    if (g.winner != null) return '';
+    if (!myTurn()) {
+      const sel = ui.sel && findCard(ui.sel);
+      const extra = sel && T[sel.t].desc ? `<div class="sub">${esc(T[sel.t].name)}: ${esc(T[sel.t].desc)}</div>` : '';
+      return `<div class="hint-text">⏳ <b>${esc(cur.name)}</b> ist am Zug${g.pending ? ' und wühlt im Müll' : ''} …</div>${extra}`;
+    }
+    const played = `<span class="pill">${g.played}/3 gespielt</span>`;
+    const cancel = '<button class="btn ghost" data-do="cancel">Abbrechen</button>';
+    if (g.pending) {
+      return `<div class="hint-text">🗑️ Wähle eine Zutat aus dem Müll${ui.dig ? ' – und tippe dann auf ein markiertes Feld' : ''}.</div>
+        <div class="btn-row"><button class="btn" data-do="digOpen">Müll durchsuchen</button></div>`;
+    }
+    if (ui.mode === 'burn') return `<div class="hint-text">🔥 Tippe auf den Burger, der verbrennen soll.</div><div class="btn-row">${cancel}</div>`;
+    if (ui.mode === 'stealSrc') return `<div class="hint-text">✋ Was willst du klauen? Tippe auf einen markierten Burger.</div><div class="btn-row">${cancel}</div>`;
+    if (ui.mode === 'stealDst') return `<div class="hint-text">✋ Wohin damit? Tippe auf ein markiertes Feld (anderes Tablett).</div><div class="btn-row">${cancel}</div>`;
+
+    const c = ui.sel && findCard(ui.sel);
+    if (!c) {
+      const canEnd = g.played > 0 || !myHand().length;
+      return `<div class="hint-text">🍳 Du bist dran! Spiele 1–3 Karten. ${played}</div>
+        <div class="btn-row"><button class="btn ${canEnd ? 'primary' : ''}" data-do="end" ${canEnd ? '' : 'disabled'}>Zug beenden</button></div>`;
+    }
+    const d = T[c.t];
+    const pairBtn = canPair(c) ? '<button class="btn" data-do="pair">👯 Paar → Karte ziehen</button>' : '';
+    if (d.kind === 'ing') {
+      const has = targets().size > 0;
+      return `<div class="hint-text">${has ? `<b>${esc(d.name)}</b>: Tippe auf ein markiertes Feld auf deinem Tablett.` : `<b>${esc(d.name)}</b> passt gerade nirgends hin.`} ${played}</div>
+        <div class="btn-row"><button class="btn" data-do="discard">🗑️ Abwerfen</button>${pairBtn}${cancel}</div>`;
+    }
+    return `<div class="hint-text"><b>${A.ACTIONS[c.t]} ${esc(d.name)}</b>: ${esc(d.desc)} ${played}</div>
+      <div class="btn-row"><button class="btn primary" data-do="play">Ausspielen</button><button class="btn" data-do="discard">🗑️ Abwerfen</button>${pairBtn}${cancel}</div>`;
+  }
+
+  function renderGame() {
+    const g = game();
+    const R = recipesOf(g);
+    const tg = targets();
+    const mine = g.players[me()];
+    const others = g.players.map((p, i) => ({ p, i })).filter(x => x.i !== me());
+    // Order opponents in seating order starting after me.
+    others.sort((a, b) => ((a.i - me() + g.players.length) % g.players.length) - ((b.i - me() + g.players.length) % g.players.length));
+    const top = g.trash[g.trash.length - 1];
+    const recent = g.log.slice(-2).reverse();
+
+    app.innerHTML = `
+      <div class="game">
+        <header class="topbar">
+          <button class="pile deck" data-do="noop" title="Nachziehstapel"><span class="back"></span><b>${g.deckCount}</b></button>
+          <button class="pile trash" data-do="trash" title="Müll">${top ? miniCard(top, 20) : '<span class="empty">🗑️</span>'}<b>${g.trash.length}</b></button>
+          <div class="spacer"></div>
+          <button class="tbtn" data-do="menu">📋 Menü</button>
+          <button class="tbtn" data-do="more">⋯</button>
+        </header>
+
+        <section class="opponents">
+          ${others.map(({ p, i }) => `
+            <div class="opp ${g.current === i ? 'active' : ''} ${view.players[i] && !view.players[i].connected ? 'offline' : ''}">
+              <div class="opp-head">
+                <span class="oname">${g.current === i ? '🍳 ' : ''}${esc(p.name)}</span>
+                <span class="ometa"><span class="hc">${'<i></i>'.repeat(p.handCount)}</span> ✓${E.completedCount(p.tray, R)}/${R.length}</span>
+              </div>
+              ${trayHTML(p, i, 20, tg)}
+            </div>`).join('')}
+        </section>
+
+        <button class="ticker" data-do="log">${recent.map((l, k) => `<div class="${k === 0 && l.n > lastLogN ? 'fresh' : ''}">${esc(l.text)}</div>`).join('')}</button>
+
+        <section class="mytray ${myTurn() ? 'active' : ''}">
+          <div class="my-head"><b>Dein Tablett</b><span>✓ ${E.completedCount(mine.tray, R)}/${R.length} Burger</span></div>
+          ${trayHTML(mine, me(), 30, tg)}
+        </section>
+
+        <section class="hint">${hintHTML()}</section>
+
+        <section class="hand">${myHand().map(handCard).join('') || '<div class="empty-hand">Keine Karten auf der Hand</div>'}</section>
+
+        ${g.winner != null ? `
+          <div class="winner">
+            <div class="winner-card">
+              <div class="big-emoji">🍔</div>
+              <h2>${g.winner === me() ? 'Du gewinnst!' : `${esc(g.players[g.winner].name)} gewinnt!`}</h2>
+              <p>${g.winner === me() ? 'Alle Burger fertig – du bist Küchenchef:in!' : 'Ab in die Küche, nächste Runde!'}</p>
+              ${view.host === me() ? '<button class="btn primary big" data-do="restart">Nochmal spielen</button>' : '<p class="wait">Warte auf den Gastgeber …</p>'}
+              <button class="link" data-do="leave">Tisch verlassen</button>
+            </div>
+          </div>` : ''}
+      </div>`;
+    if (g.log.length) lastLogN = Math.max(lastLogN, g.log[g.log.length - 1].n);
+  }
+
+  // ---------- Sheets ----------
+
+  function openSheet(html, kind) {
+    sheetKind = kind || 'info';
+    sheet.innerHTML = `<div class="sheet-bg" data-do="${sheetKind === 'lock' ? 'noop' : 'closeSheet'}"></div>
+      <div class="sheet-card">${sheetKind === 'lock' ? '' : '<button class="sheet-x" data-do="closeSheet">✕</button>'}${html}</div>`;
+    sheet.classList.remove('hidden');
+  }
+
+  function closeSheet() {
+    sheetKind = null;
+    sheet.classList.add('hidden');
+    sheet.innerHTML = '';
+  }
+
+  function menuSheet() {
+    const g = game();
+    const R = g ? g.recipes : (view && view.players.length <= 3 ? [0, 1, 2, 3] : [0, 1, 2]);
+    const tray = g ? g.players[me()].tray : [];
+    openSheet(`<h2>Smash Menu</h2>
+      <p class="note">Von links nach rechts legen – das Brötchen kommt zum Schluss.</p>
+      <div class="menu-list">${E.RECIPES.map((r, i) => {
+        const active = R.includes(i);
+        const done = tray.some(st => E.completeRecipe(st, [i]) === i);
+        return `<div class="menu-item ${active ? '' : 'inactive'} ${done ? 'done' : ''}">
+          <div class="menu-name">${done ? '✅ ' : ''}${i + 1}. ${esc(r.name)}${i === 3 ? ' <small>(nur 2–3 Spieler:innen)</small>' : ''}</div>
+          <div class="menu-row">${r.layers.map(l => A.icon(l, 34)).join('<span class="plus">+</span>')}</div>
+        </div>`;
+      }).join('')}</div>`);
+  }
+
+  function trashSheet() {
+    const g = game();
+    const list = g.trash.slice().reverse();
+    openSheet(`<h2>🗑️ Müll (${list.length})</h2>
+      <p class="note">Oben liegt die zuletzt abgeworfene Karte.</p>
+      <div class="card-grid">${list.map(c => `<div class="gcard ${T[c.t].kind}">${A.cardArt(c.t, 28)}<span>${esc(T[c.t].name)}</span></div>`).join('') || '<p>Noch leer.</p>'}</div>`);
+  }
+
+  function digSheet() {
+    const g = game();
+    const opts = new Set(E.digOptions({ trash: g.trash, players: g.players.map(p => ({ tray: p.tray })), recipes: g.recipes }, me()).map(c => c.id));
+    const list = g.trash.slice().reverse().filter(c => opts.has(c.id));
+    openSheet(`<h2>🗑️ Mülltaucher</h2>
+      <p class="note">Nimm dir eine Zutat – du musst sie sofort auf dein Tablett legen.</p>
+      <div class="card-grid">${list.map(c => `<button class="gcard ing pick" data-do="digPick" data-id="${c.id}">${A.cardArt(c.t, 28)}<span>${esc(T[c.t].name)}</span></button>`).join('')}</div>`, 'lock');
+  }
+
+  function logSheet() {
+    const g = game();
+    openSheet(`<h2>Was ist passiert?</h2><ol class="log">${g.log.slice().reverse().map(l => `<li>${esc(l.text)}</li>`).join('')}</ol>`);
+  }
+
+  function moreSheet() {
+    openSheet(`<h2>Tisch ${esc(view.code)}</h2>
+      <div class="col">
+        <button class="btn" data-do="rules">📖 Spielregeln</button>
+        <button class="btn" data-do="log">📜 Spielverlauf</button>
+        <button class="btn" data-do="share">🔗 Tisch-Link teilen</button>
+        <button class="btn danger" data-do="leave">Tisch verlassen</button>
+      </div>`);
+  }
+
+  function rulesSheet() {
+    openSheet(`<h2>📖 So wird gespielt</h2>
+      <div class="rules">
+        <p><b>Ziel:</b> Stelle als Erste:r alle Burger der Speisekarte auf deinem Tablett fertig. 2–3 Personen: alle 4 Burger. 4–6 Personen: nur die ersten 3.</p>
+        <p><b>Dein Zug:</b> Spiele 1, 2 oder 3 Karten aus deiner Hand – beliebig kombiniert:</p>
+        <ul>
+          <li><b>Zutat legen</b> – auf einen deiner Burger oder als neuen Burger. Gelegte Zutaten bleiben, wo sie sind.</li>
+          <li><b>Abwerfen</b> – unerwünschte Karten in den Müll.</li>
+          <li><b>Aktionskarte</b> ausspielen – danach kommt sie in den Müll.</li>
+        </ul>
+        <p>Aussetzen gilt nicht. Am Ende deines Zugs ziehst du automatisch auf 3 Karten nach. Ist der Stapel leer, wird der Müll umgedreht (ohne Mischen).</p>
+        <p><b>Reihenfolge:</b> Burger werden immer in der Reihenfolge der Speisekarte gebaut (von links nach rechts, Brötchen zuletzt). Dasselbe Burger-Rezept darf nie doppelt auf deinem Tablett liegen – die App zeigt dir nur erlaubte Felder.</p>
+        <p><b>Kombi-Karten:</b> „Salat + Tomate“ und „Cheese-Patty“ (Patty + Käse) zählen als zwei Zutaten. Die drei „fertigen Burger“ sind ein kompletter Burger auf einer Karte.</p>
+        <h3>Aktionskarten</h3>
+        <ul>
+          <li>🔥 <b>Anbrennen:</b> Verbrenne einen beliebigen Burger oder Zutatenstapel (auch deinen eigenen).</li>
+          <li>✋ <b>Klauen:</b> Nimm von einem beliebigen Tablett einen fertigen Burger oder die oberste Zutat (auch das Brötchen) und lege sie auf ein anderes Tablett.</li>
+          <li>🗑️ <b>Mülltaucher:</b> Nimm eine Zutat aus dem Müll und lege sie sofort auf dein Tablett.</li>
+          <li>🔄 <b>Falscher Tisch:</b> Alle Tabletts wandern gleichzeitig eine Person weiter.</li>
+        </ul>
+        <p><b>👯 Paar:</b> Hast du zwei identische Karten, darfst du beide abwerfen (zählt als 2 gespielte Karten) und blind eine Karte von einer anderen Person ziehen. Die Person startet ihren nächsten Zug mit einer Karte weniger.</p>
+        <p><b>Profi-Tipp:</b> Verbrenne einen Burger mit einer Zutat, die du brauchst – und hol sie dir danach aus dem Müll zurück.</p>
+      </div>`);
+  }
+
+  // ---------- Toast ----------
+
+  let toastTimer;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.add('hidden'), 2600);
+  }
+
+  // ---------- Zustand ----------
+
+  function onView() {
+    const g = game();
+    if (!g || !myTurn()) {
+      ui = freshUi();
+      if (sheetKind === 'ctx' || sheetKind === 'lock') closeSheet();
+    } else if (ui.sel && !findCard(ui.sel) && !ui.mode?.startsWith('dig')) {
+      ui = freshUi();
+    }
+    if (g && myTurn() && g.pending && g.pending.type === 'dig' && !ui.dig && sheetKind !== 'lock') digSheet();
+    if (g && !g.pending && sheetKind === 'lock') closeSheet();
+    const mt = myTurn();
+    if (mt && !wasMyTurn) {
+      if (navigator.vibrate) navigator.vibrate(60);
+      document.title = '🍳 Du bist dran! – Smash Burger';
+    } else if (!mt) document.title = 'Smash Burger';
+    wasMyTurn = mt;
+    if (view.phase === 'game') history.replaceState(null, '', '?room=' + view.code);
+    render();
+  }
+
+  async function share() {
+    const url = `${location.origin}/?room=${view.code}`;
+    const text = `Komm an meinen Smash-Burger-Tisch! Code: ${view.code}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Smash Burger', text, url }); return; } catch { /* abgebrochen */ }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Link kopiert!');
+    } catch {
+      toast(url);
+    }
+  }
+
+  async function enter(path) {
+    const name = (document.getElementById('name').value || '').trim();
+    const code = (document.getElementById('code')?.value || '').trim().toUpperCase();
+    if (!name) return toast('Bitte gib deinen Namen ein.');
+    if (path === '/api/join' && code.length !== 4) return toast('Der Code hat 4 Buchstaben.');
+    localStorage.setItem(LS_NAME, name);
+    try {
+      const r = await post(path, { name, code });
+      saveSession(r);
+      history.replaceState(null, '', '?room=' + r.code);
+      connect();
+    } catch (e) {
+      toast(e.message);
+    }
+  }
+
+  // ---------- Eingaben ----------
+
+  function onStack(p, s) {
+    const g = game();
+    if (!myTurn()) return;
+    const key = `${p}:${s}`;
+    const tg = targets();
+    const stackIdx = s === 'new' ? 'new' : Number(s);
+    if (ui.mode === 'place' && tg.has(key)) return send({ type: 'place', cardId: ui.sel, stack: stackIdx });
+    if (ui.mode === 'digPick' && tg.has(key)) return send({ type: 'digPick', cardId: ui.dig, stack: stackIdx });
+    if (ui.mode === 'burn' && tg.has(key)) {
+      const st = g.players[p].tray[stackIdx];
+      const owner = p === me() ? 'deinem eigenen Tablett' : `dem Tablett von ${g.players[p].name}`;
+      openSheet(`<h2>🔥 Wirklich verbrennen?</h2>
+        <div class="stack-preview">${st.map(c => miniCard(c, 30)).join('')}</div>
+        <p>${esc(stackLabel(st, g.recipes))} auf ${esc(owner)} landet im Müll.</p>
+        <div class="btn-row"><button class="btn primary" data-do="burnYes" data-p="${p}" data-s="${stackIdx}">Verbrennen!</button><button class="btn ghost" data-do="closeSheet">Abbrechen</button></div>`, 'ctx');
+      return;
+    }
+    if (ui.mode === 'stealSrc' && tg.has(key)) {
+      const opts = stealOptions(p, stackIdx);
+      const st = g.players[p].tray[stackIdx];
+      const from = { player: p, stack: stackIdx };
+      if (opts.whole.length && opts.top.length) {
+        openSheet(`<h2>✋ Was klaust du?</h2>
+          <div class="col">
+            <button class="btn primary" data-do="stealMode" data-m="whole">Den ganzen fertigen Burger</button>
+            <button class="btn" data-do="stealMode" data-m="top">Nur die oberste Zutat (${esc(T[st[st.length - 1].t].name)})</button>
+          </div>`, 'ctx');
+        ui.steal = { from, mode: null };
+        return;
+      }
+      ui.steal = { from, mode: opts.whole.length ? 'whole' : 'top' };
+      ui.mode = 'stealDst';
+      return render();
+    }
+    if (ui.mode === 'stealDst' && tg.has(key)) {
+      return send({ type: 'steal', cardId: ui.sel, mode: ui.steal.mode, from: ui.steal.from, to: { player: p, stack: stackIdx } });
+    }
+  }
+
+  function onCard(id) {
+    const g = game();
+    if (!myTurn()) {
+      ui.sel = ui.sel === id ? null : id;
+      return render();
+    }
+    if (g.pending) return digSheet();
+    if (ui.sel === id) {
+      ui = freshUi();
+      return render();
+    }
+    const c = findCard(id);
+    ui = freshUi();
+    ui.sel = id;
+    if (T[c.t].kind === 'ing') ui.mode = 'place';
+    render();
+  }
+
+  function onPlay() {
+    const g = game();
+    const c = findCard(ui.sel);
+    if (!c) return;
+    if (c.t === 'burn') {
+      if (!g.players.some(p => p.tray.length)) return toast('Es gibt noch nichts zu verbrennen.');
+      ui.mode = 'burn';
+      return render();
+    }
+    if (c.t === 'steal') {
+      if (!stealSources().length) return toast('Gerade gibt es nichts, was sich klauen lässt.');
+      ui.mode = 'stealSrc';
+      return render();
+    }
+    if (c.t === 'dig') return send({ type: 'dig', cardId: c.id });
+    if (c.t === 'swap') {
+      const n = g.players.length;
+      const prev = g.players[(me() - 1 + n) % n].name;
+      const next = g.players[(me() + 1) % n].name;
+      openSheet(`<h2>🔄 Falscher Tisch!</h2>
+        <p class="note">Alle Tabletts wandern gleichzeitig – inklusive aller Burger.</p>
+        <div class="col">
+          <button class="btn" data-do="swapDir" data-d="next">Weiter an die nächste Person<br><small>Du bekommst das Tablett von ${esc(prev)}</small></button>
+          <button class="btn" data-do="swapDir" data-d="prev">Zurück an die vorherige Person<br><small>Du bekommst das Tablett von ${esc(next)}</small></button>
+        </div>`, 'ctx');
+    }
+  }
+
+  function onPair() {
+    const g = game();
+    const c = findCard(ui.sel);
+    const twin = twinOf(c);
+    if (!twin) return;
+    openSheet(`<h2>👯 Paar abwerfen</h2>
+      <p class="note">Du wirfst beide „${esc(T[c.t].name)}“ ab und ziehst blind eine Karte. Von wem?</p>
+      <div class="col">${g.players.map((p, i) => i === me() || !p.handCount ? '' :
+        `<button class="btn" data-do="pairTarget" data-i="${i}">${esc(p.name)} <small>(${p.handCount} Karten)</small></button>`).join('')}</div>`, 'ctx');
+  }
+
+  async function click(e) {
+    const el = e.target.closest('[data-do]');
+    if (!el) return;
+    const d = el.dataset;
+    switch (d.do) {
+      case 'create': return enter('/api/create');
+      case 'join': return enter('/api/join');
+      case 'rules': return rulesSheet();
+      case 'menu': return menuSheet();
+      case 'trash': return trashSheet();
+      case 'log': return logSheet();
+      case 'more': return moreSheet();
+      case 'share': return share();
+      case 'closeSheet':
+        if (sheetKind === 'ctx' && ui.steal && !ui.steal.mode) ui = freshUi();
+        closeSheet();
+        return render();
+      case 'addBot': return send({ type: 'addBot' });
+      case 'start': return send({ type: 'start' });
+      case 'restart': return send({ type: 'restart' });
+      case 'kick': return send({ type: 'kick', target: Number(d.i) });
+      case 'leave':
+        if (!confirm(game() && game().winner == null ? 'Tisch verlassen? Ein Bot spielt für dich weiter.' : 'Tisch verlassen?')) return;
+        await send({ type: 'leave' });
+        if (es) es.close();
+        es = null;
+        saveSession(null);
+        view = null;
+        closeSheet();
+        history.replaceState(null, '', '/');
+        return render();
+      case 'card': return onCard(Number(d.id));
+      case 'stack': return onStack(Number(d.p), d.s);
+      case 'cancel':
+        ui = freshUi();
+        return render();
+      case 'end': return send({ type: 'end' });
+      case 'discard': return send({ type: 'discard', cardId: ui.sel });
+      case 'play': return onPlay();
+      case 'pair': return onPair();
+      case 'pairTarget': {
+        const c = findCard(ui.sel);
+        return send({ type: 'pair', cardIds: [c.id, twinOf(c).id], target: Number(d.i) });
+      }
+      case 'burnYes': return send({ type: 'burn', cardId: ui.sel, target: { player: Number(d.p), stack: Number(d.s) } });
+      case 'stealMode':
+        ui.steal.mode = d.m;
+        ui.mode = 'stealDst';
+        closeSheet();
+        return render();
+      case 'swapDir': return send({ type: 'swap', cardId: ui.sel, dir: d.d });
+      case 'digOpen': return digSheet();
+      case 'digPick':
+        ui = freshUi();
+        ui.dig = Number(d.id);
+        ui.mode = 'digPick';
+        closeSheet();
+        return render();
+    }
+  }
+
+  app.addEventListener('click', click);
+  sheet.addEventListener('click', click);
+  app.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.id === 'code') enter('/api/join');
+  });
+
+  if (session) connect();
+  render();
+})();

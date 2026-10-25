@@ -1,0 +1,15 @@
+{
+  "name": "smash-burger",
+  "version": "1.0.0",
+  "description": "Smash Burger – Online-Multiplayer-Kartenspiel (2–6 Spieler:innen)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/sim.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

@@ -1,0 +1,491 @@
+/* Smash Burger – Spiellogik. Läuft auf dem Server (autoritativ) und im Browser (für Hervorhebungen). */
+(function (root, factory) {
+  const E = factory();
+  if (typeof module === 'object' && module.exports) module.exports = E;
+  else root.SmashEngine = E;
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  const MAX_PLAYS = 3;
+  const HAND_SIZE = 3;
+
+  const LAYERS = {
+    bun: 'Brötchen', tomato: 'Tomate', salad: 'Salat',
+    cheese: 'Käse', beef: 'Beef-Patty', chicken: 'Chicken-Patty',
+  };
+
+  // Ingredient layers are listed bottom → top, i.e. in the order they are laid on the tray.
+  const TYPES = {
+    bun:         { kind: 'ing', layers: ['bun'], name: 'Brötchen', count: 8 },
+    tomato:      { kind: 'ing', layers: ['tomato'], name: 'Tomate', count: 6 },
+    salad:       { kind: 'ing', layers: ['salad'], name: 'Salat', count: 6 },
+    cheese:      { kind: 'ing', layers: ['cheese'], name: 'Käse', count: 6 },
+    beef:        { kind: 'ing', layers: ['beef'], name: 'Beef-Patty', count: 6 },
+    chicken:     { kind: 'ing', layers: ['chicken'], name: 'Chicken-Patty', count: 2 },
+    saladTomato: { kind: 'ing', layers: ['salad', 'tomato'], name: 'Salat + Tomate', count: 3 },
+    beefCheese:  { kind: 'ing', layers: ['beef', 'cheese'], name: 'Cheese-Patty', count: 3 },
+    fullCheese:  { kind: 'ing', layers: ['beef', 'cheese', 'bun'], name: 'Fertiger Cheeseburger', count: 1 },
+    fullChicken: { kind: 'ing', layers: ['salad', 'tomato', 'chicken', 'bun'], name: 'Fertiger Chicken Burger', count: 1 },
+    fullDeluxe:  { kind: 'ing', layers: ['beef', 'cheese', 'salad', 'tomato', 'bun'], name: 'Fertiger Deluxe Burger', count: 1 },
+    burn:  { kind: 'act', name: 'Anbrennen', count: 3, desc: 'Verbrenne einen beliebigen Burger oder Zutatenstapel – ab in den Müll.' },
+    steal: { kind: 'act', name: 'Klauen', count: 3, desc: 'Klaue einen fertigen Burger oder die oberste Zutat und lege sie auf ein anderes Tablett.' },
+    dig:   { kind: 'act', name: 'Mülltaucher', count: 3, desc: 'Nimm dir eine Zutat aus dem Müll und verwende sie sofort.' },
+    swap:  { kind: 'act', name: 'Falscher Tisch', count: 2, desc: 'Alle Tabletts wandern gleichzeitig eine Person weiter.' },
+  };
+
+  const RECIPES = [
+    { id: 'cheese',  name: 'Cheeseburger',   layers: ['beef', 'cheese', 'bun'] },
+    { id: 'chicken', name: 'Chicken Burger', layers: ['salad', 'tomato', 'chicken', 'bun'] },
+    { id: 'deluxe',  name: 'Deluxe Burger',  layers: ['beef', 'cheese', 'salad', 'tomato', 'bun'] },
+    { id: 'classic', name: 'Classic Burger', layers: ['salad', 'tomato', 'beef', 'bun'] },
+  ];
+
+  // ---------- Burger-Regeln ----------
+
+  function layersOf(cards) {
+    const out = [];
+    for (const c of cards) out.push(...TYPES[c.t].layers);
+    return out;
+  }
+
+  function isPrefix(a, r) {
+    if (a.length > r.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== r[i]) return false;
+    return true;
+  }
+
+  function candidates(stack, recipes) {
+    const l = layersOf(stack);
+    return recipes.filter(i => isPrefix(l, RECIPES[i].layers));
+  }
+
+  function completeRecipe(stack, recipes) {
+    const l = layersOf(stack);
+    for (const i of recipes) {
+      const r = RECIPES[i].layers;
+      if (l.length === r.length && isPrefix(l, r)) return i;
+    }
+    return -1;
+  }
+
+  // Every stack must be the start of a menu burger, and no burger may appear twice:
+  // there has to be a one-to-one assignment of stacks to recipes.
+  function trayValid(tray, recipes) {
+    if (tray.length > recipes.length) return false;
+    const cands = tray.map(s => candidates(s, recipes));
+    if (cands.some(c => !c.length)) return false;
+    const order = cands.map((_, i) => i).sort((a, b) => cands[a].length - cands[b].length);
+    const used = new Set();
+    function bt(k) {
+      if (k === order.length) return true;
+      for (const r of cands[order[k]]) {
+        if (used.has(r)) continue;
+        used.add(r);
+        if (bt(k + 1)) return true;
+        used.delete(r);
+      }
+      return false;
+    }
+    return bt(0);
+  }
+
+  function withAdded(tray, cards, target) {
+    const t = tray.map(s => s.slice());
+    if (target === 'new') t.push(cards.slice());
+    else t[target].push(...cards);
+    return t;
+  }
+
+  function placeTargets(tray, cards, recipes) {
+    const out = [];
+    for (let i = 0; i < tray.length; i++) if (trayValid(withAdded(tray, cards, i), recipes)) out.push(i);
+    if (trayValid(withAdded(tray, cards, 'new'), recipes)) out.push('new');
+    return out;
+  }
+
+  function completedCount(tray, recipes) {
+    return tray.filter(s => completeRecipe(s, recipes) >= 0).length;
+  }
+
+  function trayDone(tray, recipes) {
+    return recipes.every(r => tray.some(s => completeRecipe(s, [r]) === r));
+  }
+
+  // ---------- Spielablauf ----------
+
+  function makeDeck() {
+    const d = [];
+    let id = 1;
+    for (const [t, def] of Object.entries(TYPES)) for (let i = 0; i < def.count; i++) d.push({ id: id++, t });
+    return d;
+  }
+
+  function shuffle(a, rng) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function newGame(names, startIdx, rng) {
+    rng = rng || Math.random;
+    const n = names.length;
+    const s = {
+      recipes: n <= 3 ? [0, 1, 2, 3] : [0, 1, 2],
+      players: names.map(name => ({ name, hand: [], tray: [] })),
+      deck: shuffle(makeDeck(), rng),
+      trash: [],
+      current: startIdx == null ? Math.floor(rng() * n) : startIdx,
+      played: 0,
+      pending: null,
+      winner: null,
+      turn: 1,
+      log: [],
+      logSeq: 0,
+    };
+    for (let k = 0; k < HAND_SIZE; k++) for (const p of s.players) p.hand.push(s.deck.pop());
+    log(s, `${s.players[s.current].name} beginnt. Guten Appetit!`);
+    return s;
+  }
+
+  function log(s, text) {
+    s.log.push({ n: ++s.logSeq, text });
+    if (s.log.length > 80) s.log.shift();
+  }
+
+  function draw(s) {
+    if (!s.deck.length) {
+      if (!s.trash.length) return null;
+      // Flip the trash pile without shuffling: the oldest discard ends up on top.
+      s.deck = s.trash.reverse();
+      s.trash = [];
+      log(s, 'Nachziehstapel leer – der Müll wird umgedreht und ist wie neu!');
+    }
+    return s.deck.pop();
+  }
+
+  function endTurn(s) {
+    const me = s.players[s.current];
+    while (me.hand.length < HAND_SIZE) {
+      const c = draw(s);
+      if (!c) break;
+      me.hand.push(c);
+    }
+    s.current = (s.current + 1) % s.players.length;
+    s.played = 0;
+    s.turn++;
+  }
+
+  function checkWin(s) {
+    const n = s.players.length;
+    for (let k = 0; k < n; k++) {
+      const i = (s.current + k) % n;
+      if (trayDone(s.players[i].tray, s.recipes)) {
+        s.winner = i;
+        log(s, `🍔 ${s.players[i].name} hat alle Burger fertig und gewinnt!`);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function afterPlay(s) {
+    if (checkWin(s)) return;
+    const me = s.players[s.current];
+    if (!s.pending && (s.played >= MAX_PLAYS || !me.hand.length)) endTurn(s);
+  }
+
+  function digOptions(s, p) {
+    const tray = s.players[p].tray;
+    return s.trash.filter(c => TYPES[c.t].kind === 'ing' && placeTargets(tray, [c], s.recipes).length);
+  }
+
+  function stackLabel(stack, recipes) {
+    const r = completeRecipe(stack, recipes);
+    if (r >= 0) return `den fertigen ${RECIPES[r].name}`;
+    return stack.length === 1 ? `${TYPES[stack[0].t].name}` : `einen halben Burger (${stack.length} Karten)`;
+  }
+
+  function normTarget(t, tray) {
+    if (t === 'new') return 'new';
+    const i = Number(t);
+    return Number.isInteger(i) && i >= 0 && i < tray.length ? i : null;
+  }
+
+  const ok = () => ({ ok: true });
+  const fail = error => ({ ok: false, error });
+
+  function act(s, p, a, rng) {
+    rng = rng || Math.random;
+    if (!a || typeof a !== 'object') return fail('Ungültige Aktion.');
+    if (s.winner != null) return fail('Das Spiel ist vorbei.');
+    if (p !== s.current) return fail('Du bist nicht am Zug.');
+    const me = s.players[p];
+    const R = s.recipes;
+
+    if (s.pending) {
+      if (s.pending.type !== 'dig' || a.type !== 'digPick') return fail('Verwende zuerst die Karte aus dem Müll.');
+      const ti = s.trash.findIndex(c => c.id === a.cardId);
+      if (ti < 0 || TYPES[s.trash[ti].t].kind !== 'ing') return fail('Diese Zutat liegt nicht im Müll.');
+      const card = s.trash[ti];
+      const tg = normTarget(a.stack, me.tray);
+      if (tg == null || !placeTargets(me.tray, [card], R).includes(tg)) return fail('Da passt die Zutat nicht hin.');
+      s.trash.splice(ti, 1);
+      me.tray = withAdded(me.tray, [card], tg);
+      s.pending = null;
+      log(s, `🗑️ ${me.name} fischt ${TYPES[card.t].name} aus dem Müll und legt es aufs Tablett.`);
+      afterPlay(s);
+      return ok();
+    }
+
+    if (a.type === 'end') {
+      if (s.played === 0 && me.hand.length) return fail('Aussetzen gilt nicht – spiel mindestens 1 Karte.');
+      endTurn(s);
+      return ok();
+    }
+
+    if (a.type === 'pair') {
+      if (s.played + 2 > MAX_PLAYS) return fail('Für ein Paar brauchst du noch 2 freie Spielzüge.');
+      const ids = Array.isArray(a.cardIds) ? a.cardIds : [];
+      const cards = ids.map(id => me.hand.find(c => c.id === id));
+      if (cards.length !== 2 || !cards[0] || !cards[1] || ids[0] === ids[1] || cards[0].t !== cards[1].t) {
+        return fail('Dafür brauchst du zwei identische Karten.');
+      }
+      const victim = s.players[a.target];
+      if (!victim || a.target === p) return fail('Wähle eine andere Person.');
+      if (!victim.hand.length) return fail(`${victim.name} hat keine Karten.`);
+      me.hand = me.hand.filter(c => !ids.includes(c.id));
+      s.trash.push(...cards);
+      const stolen = victim.hand.splice(Math.floor(rng() * victim.hand.length), 1)[0];
+      me.hand.push(stolen);
+      s.played += 2;
+      log(s, `🃏 ${me.name} wirft zwei Mal ${TYPES[cards[0].t].name} ab und zieht blind eine Karte von ${victim.name}.`);
+      afterPlay(s);
+      return ok();
+    }
+
+    if (s.played >= MAX_PLAYS) return fail('Du hast schon 3 Karten gespielt.');
+    const hi = me.hand.findIndex(c => c.id === a.cardId);
+    if (hi < 0) return fail('Die Karte ist nicht auf deiner Hand.');
+    const card = me.hand[hi];
+    const def = TYPES[card.t];
+
+    switch (a.type) {
+      case 'place': {
+        if (def.kind !== 'ing') return fail('Das ist keine Zutat.');
+        const tg = normTarget(a.stack, me.tray);
+        if (tg == null || !placeTargets(me.tray, [card], R).includes(tg)) return fail('Da passt die Zutat nicht hin.');
+        me.hand.splice(hi, 1);
+        me.tray = withAdded(me.tray, [card], tg);
+        const st = me.tray[tg === 'new' ? me.tray.length - 1 : tg];
+        const done = completeRecipe(st, R);
+        log(s, done >= 0
+          ? `✅ ${me.name} stellt einen ${RECIPES[done].name} fertig!`
+          : `${me.name} legt ${def.name}${tg === 'new' ? ' als neuen Burger' : ''}.`);
+        break;
+      }
+      case 'discard': {
+        me.hand.splice(hi, 1);
+        s.trash.push(card);
+        log(s, `${me.name} wirft ${def.name} in den Müll.`);
+        break;
+      }
+      case 'burn': {
+        if (card.t !== 'burn') return fail('Falsche Karte.');
+        const tp = s.players[a.target && a.target.player];
+        const si = tp ? normTarget(a.target.stack, tp.tray) : null;
+        if (si == null || si === 'new') return fail('Diesen Burger gibt es nicht.');
+        const st = tp.tray[si];
+        const label = stackLabel(st, R);
+        me.hand.splice(hi, 1);
+        tp.tray.splice(si, 1);
+        s.trash.push(...st, card);
+        log(s, `🔥 ${me.name} verbrennt ${label} ${tp === me ? 'auf dem eigenen Tablett' : `von ${tp.name}`}.`);
+        break;
+      }
+      case 'steal': {
+        if (card.t !== 'steal') return fail('Falsche Karte.');
+        const f = a.from || {}, t = a.to || {};
+        const src = s.players[f.player];
+        const si = src ? normTarget(f.stack, src.tray) : null;
+        if (si == null || si === 'new') return fail('Diesen Burger gibt es nicht.');
+        const dst = s.players[t.player];
+        if (!dst || t.player === f.player) return fail('Die Beute muss auf ein anderes Tablett.');
+        const st = src.tray[si];
+        const whole = a.mode === 'whole';
+        if (whole && completeRecipe(st, R) < 0) return fail('Ganz klauen geht nur bei fertigen Burgern.');
+        const moving = whole ? st.slice() : [st[st.length - 1]];
+        const tg = whole ? 'new' : normTarget(t.stack, dst.tray);
+        if (tg == null) return fail('Ungültiges Ziel.');
+        const newDst = withAdded(dst.tray, moving, tg);
+        if (!trayValid(newDst, R)) return fail('Das passt auf dem Ziel-Tablett nicht.');
+        const label = whole ? stackLabel(st, R) : TYPES[moving[0].t].name;
+        me.hand.splice(hi, 1);
+        if (whole) src.tray.splice(si, 1);
+        else {
+          st.pop();
+          if (!st.length) src.tray.splice(si, 1);
+        }
+        dst.tray = newDst;
+        s.trash.push(card);
+        const where = dst === me ? 'aufs eigene Tablett' : `aufs Tablett von ${dst.name}`;
+        log(s, `✋ ${me.name} klaut ${label} ${src === me ? 'vom eigenen Tablett' : `von ${src.name}`} und legt es ${where}.`);
+        break;
+      }
+      case 'dig': {
+        if (card.t !== 'dig') return fail('Falsche Karte.');
+        me.hand.splice(hi, 1);
+        s.trash.push(card);
+        if (digOptions(s, p).length) {
+          s.pending = { type: 'dig' };
+          log(s, `🗑️ ${me.name} durchwühlt den Müll …`);
+        } else {
+          log(s, `🗑️ ${me.name} durchwühlt den Müll, findet aber nichts Brauchbares.`);
+        }
+        break;
+      }
+      case 'swap': {
+        if (card.t !== 'swap') return fail('Falsche Karte.');
+        if (a.dir !== 'next' && a.dir !== 'prev') return fail('Wähle eine Richtung.');
+        const n = s.players.length;
+        const trays = s.players.map(pl => pl.tray);
+        s.players.forEach((pl, i) => {
+          pl.tray = a.dir === 'next' ? trays[(i - 1 + n) % n] : trays[(i + 1) % n];
+        });
+        me.hand.splice(hi, 1);
+        s.trash.push(card);
+        log(s, `🔄 Ups, falscher Tisch! ${me.name} lässt alle Tabletts ${a.dir === 'next' ? 'an die nächste' : 'an die vorherige'} Person wandern.`);
+        break;
+      }
+      default:
+        return fail('Unbekannte Aktion.');
+    }
+    s.played++;
+    afterPlay(s);
+    return ok();
+  }
+
+  function viewFor(s, p) {
+    return {
+      recipes: s.recipes,
+      players: s.players.map((pl, i) => ({
+        name: pl.name,
+        handCount: pl.hand.length,
+        hand: i === p ? pl.hand : null,
+        tray: pl.tray,
+      })),
+      deckCount: s.deck.length,
+      trash: s.trash,
+      current: s.current,
+      played: s.played,
+      pending: s.pending,
+      winner: s.winner,
+      turn: s.turn,
+      log: s.log.slice(-40),
+    };
+  }
+
+  // ---------- Bot ----------
+
+  function progress(tray, recipes) {
+    let v = 0;
+    for (const st of tray) v += layersOf(st).length + (completeRecipe(st, recipes) >= 0 ? 6 : 0);
+    return v;
+  }
+
+  function placeScore(tray, cards, tg, recipes) {
+    const after = withAdded(tray, cards, tg);
+    const st = after[tg === 'new' ? after.length - 1 : tg];
+    if (completeRecipe(st, recipes) >= 0) return 100;
+    return layersOf(cards).length * 10 + (tg === 'new' ? 0 : 5);
+  }
+
+  // A card is worth keeping if its layers fit contiguously into a burger we still need.
+  function useful(card, tray, recipes) {
+    const def = TYPES[card.t];
+    if (def.kind === 'act') return true;
+    const open = recipes.filter(r => !tray.some(st => completeRecipe(st, [r]) === r));
+    const l = def.layers;
+    return open.some(r => {
+      const rl = RECIPES[r].layers;
+      for (let i = 0; i + l.length <= rl.length; i++) if (isPrefix(l, rl.slice(i))) return true;
+      return false;
+    });
+  }
+
+  function botStep(s, p) {
+    const me = s.players[p];
+    const R = s.recipes;
+    const n = s.players.length;
+
+    if (s.pending && s.pending.type === 'dig') {
+      let best = null;
+      for (const c of digOptions(s, p)) {
+        for (const tg of placeTargets(me.tray, [c], R)) {
+          const sc = placeScore(me.tray, [c], tg, R);
+          if (!best || sc > best.sc) best = { sc, a: { type: 'digPick', cardId: c.id, stack: tg } };
+        }
+      }
+      return best.a;
+    }
+    if (s.played >= MAX_PLAYS || !me.hand.length) return { type: 'end' };
+
+    let best = null;
+    const consider = (sc, a) => { if (!best || sc > best.sc) best = { sc, a }; };
+
+    for (const c of me.hand) {
+      const def = TYPES[c.t];
+      if (def.kind === 'ing') {
+        for (const tg of placeTargets(me.tray, [c], R)) consider(placeScore(me.tray, [c], tg, R), { type: 'place', cardId: c.id, stack: tg });
+      } else if (c.t === 'burn') {
+        s.players.forEach((o, q) => {
+          if (q === p) return;
+          const threat = completedCount(o.tray, R) >= R.length - 1 ? 30 : 0;
+          o.tray.forEach((st, i) => {
+            const sc = layersOf(st).length * 4 + (completeRecipe(st, R) >= 0 ? 25 : 0) + threat - 10;
+            consider(sc, { type: 'burn', cardId: c.id, target: { player: q, stack: i } });
+          });
+        });
+      } else if (c.t === 'steal') {
+        s.players.forEach((o, q) => {
+          if (q === p) return;
+          o.tray.forEach((st, i) => {
+            if (completeRecipe(st, R) >= 0 && trayValid(withAdded(me.tray, st, 'new'), R)) {
+              consider(70, { type: 'steal', cardId: c.id, mode: 'whole', from: { player: q, stack: i }, to: { player: p, stack: 'new' } });
+            }
+            const top = st[st.length - 1];
+            for (const tg of placeTargets(me.tray, [top], R)) {
+              consider(10 + placeScore(me.tray, [top], tg, R) / 2, { type: 'steal', cardId: c.id, mode: 'top', from: { player: q, stack: i }, to: { player: p, stack: tg } });
+            }
+          });
+        });
+      } else if (c.t === 'dig') {
+        if (digOptions(s, p).length) consider(25, { type: 'dig', cardId: c.id });
+      } else if (c.t === 'swap') {
+        const mine = progress(me.tray, R);
+        const leader = Math.max(...s.players.map((o, q) => (q === p ? 0 : completedCount(o.tray, R))));
+        for (const dir of ['next', 'prev']) {
+          const from = dir === 'next' ? (p - 1 + n) % n : (p + 1) % n;
+          const gain = progress(s.players[from].tray, R) - mine;
+          consider(gain * 5 - 5 + (leader >= R.length - 1 ? 10 : 0), { type: 'swap', cardId: c.id, dir });
+        }
+      }
+    }
+    if (best && best.sc > 8) return best.a;
+
+    const useless = me.hand.filter(c => !useful(c, me.tray, R));
+    if (useless.length) return { type: 'discard', cardId: useless[0].id };
+    if (s.played === 0) {
+      const ings = me.hand.filter(c => TYPES[c.t].kind === 'ing');
+      return { type: 'discard', cardId: (ings[0] || me.hand[0]).id };
+    }
+    return { type: 'end' };
+  }
+
+  return {
+    MAX_PLAYS, HAND_SIZE, LAYERS, TYPES, RECIPES,
+    layersOf, candidates, completeRecipe, trayValid, withAdded, placeTargets, trayDone, completedCount,
+    makeDeck, newGame, act, viewFor, botStep, digOptions,
+  };
+});
