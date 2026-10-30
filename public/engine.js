@@ -89,6 +89,27 @@
     return bt(0);
   }
 
+  // Which recipe each stack is working towards (-1 if none); used to tick off the menu.
+  function assignRecipes(tray, recipes) {
+    const cands = tray.map(s => candidates(s, recipes));
+    const res = tray.map(() => -1);
+    const used = new Set();
+    function bt(k) {
+      if (k === tray.length) return true;
+      for (const r of cands[k]) {
+        if (used.has(r)) continue;
+        used.add(r);
+        res[k] = r;
+        if (bt(k + 1)) return true;
+        used.delete(r);
+      }
+      res[k] = -1;
+      return false;
+    }
+    bt(0);
+    return res;
+  }
+
   function withAdded(tray, cards, target) {
     const t = tray.map(s => s.slice());
     if (target === 'new') t.push(cards.slice());
@@ -485,7 +506,7 @@
 
   return {
     MAX_PLAYS, HAND_SIZE, LAYERS, TYPES, RECIPES,
-    layersOf, candidates, completeRecipe, trayValid, withAdded, placeTargets, trayDone, completedCount,
+    layersOf, candidates, completeRecipe, trayValid, assignRecipes, withAdded, placeTargets, trayDone, completedCount,
     makeDeck, newGame, act, viewFor, botStep, digOptions,
   };
 });

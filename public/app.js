@@ -261,9 +261,25 @@
     const twin = myTurn() && twinOf(c);
     return `<button class="card ${d.kind} ${sel ? 'sel' : ''}" data-do="card" data-id="${c.id}">
       <span class="corner">${twin ? '👯' : ''}</span>
-      <span class="art">${A.cardArt(c.t, d.kind === 'act' ? 52 : [0, 56, 40, 30, 26, 22][d.layers.length])}</span>
+      <span class="art">${A.cardArt(c.t, d.kind === 'act' ? 66 : [0, 66, 46, 34, 28, 24][d.layers.length])}</span>
       <span class="cname">${esc(d.name)}</span>
     </button>`;
+  }
+
+  // Always-visible menu: every ingredient already lying on my tray is ticked off.
+  function menuStripHTML(tray, R) {
+    const assign = E.assignRecipes(tray, R);
+    return `<div class="menu-strip">${R.map(r => {
+      const si = assign.indexOf(r);
+      const have = si >= 0 ? E.layersOf(tray[si]).length : 0;
+      const layers = E.RECIPES[r].layers;
+      const done = have === layers.length;
+      return `<div class="order ${done ? 'done' : ''}">
+        <div class="order-name">${done ? '✅' : `${have}/${layers.length}`} ${esc(E.RECIPES[r].name.replace(' Burger', ''))}</div>
+        <div class="order-row">${layers.map((l, i) =>
+          `<span class="oi ${i < have ? 'got' : ''}">${A.icon(l, 22)}${i < have ? '<b>✓</b>' : ''}</span>`).join('')}</div>
+      </div>`;
+    }).join('')}</div>`;
   }
 
   function hintHTML() {
@@ -337,7 +353,9 @@
         <button class="ticker" data-do="log">${recent.map((l, k) => `<div class="${k === 0 && l.n > lastLogN ? 'fresh' : ''}">${esc(l.text)}</div>`).join('')}</button>
 
         <section class="mytray ${myTurn() ? 'active' : ''}">
-          <div class="my-head"><b>Dein Tablett</b><span>✓ ${E.completedCount(mine.tray, R)}/${R.length} Burger</span></div>
+          <div class="my-head"><b>Deine Bestellung</b><span>✓ ${E.completedCount(mine.tray, R)}/${R.length} Burger</span></div>
+          ${menuStripHTML(mine.tray, R)}
+          <div class="my-head sub"><b>Dein Tablett</b></div>
           ${trayHTML(mine, me(), 30, tg)}
         </section>
 

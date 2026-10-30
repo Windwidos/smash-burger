@@ -31,14 +31,25 @@ window.Art = (function () {
 
   const ACTIONS = { burn: '🔥', steal: '✋', dig: '🗑️', swap: '🔄' };
 
+  // Painted illustrations (Figma AI, see art-src/); the SVGs above stay as fallback.
+  const PAINTED = new Set(['bun', 'tomato', 'salad', 'cheese', 'beef', 'chicken', 'burn', 'steal', 'dig', 'swap']);
+
+  function img(name, size, label) {
+    return `<img class="ico" src="img/${name}.png" width="${size}" height="${size}" alt="${label}" draggable="false">`;
+  }
+
   function icon(layer, size) {
-    return `<svg class="ico" viewBox="0 0 40 40" width="${size}" height="${size}" aria-label="${SmashEngine.LAYERS[layer]}">${ICONS[layer]}</svg>`;
+    const label = SmashEngine.LAYERS[layer];
+    if (PAINTED.has(layer)) return img(layer, size, label);
+    return `<svg class="ico" viewBox="0 0 40 40" width="${size}" height="${size}" aria-label="${label}">${ICONS[layer]}</svg>`;
   }
 
   // Overlapping layer icons for a card (combo cards show several layers).
   function cardArt(t, size) {
     const def = SmashEngine.TYPES[t];
-    if (def.kind === 'act') return `<span class="act-ico" style="font-size:${size * 0.7}px">${ACTIONS[t]}</span>`;
+    if (def.kind === 'act') {
+      return PAINTED.has(t) ? img(t, size, def.name) : `<span class="act-ico" style="font-size:${size * 0.7}px">${ACTIONS[t]}</span>`;
+    }
     const ls = def.layers;
     const step = ls.length > 3 ? size * 0.42 : size * 0.55;
     const w = size + step * (ls.length - 1);

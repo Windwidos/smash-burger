@@ -55,6 +55,9 @@ assert(!E.placeTargets(tray, [C('fullCheese', 3)], R4).includes('new'), 'Dritter
 assert(E.placeTargets(tray, [C('saladTomato', 4)], R4).includes('new'), 'Salat+Tomate als neuer Burger erlaubt');
 assert(E.trayDone([[C('fullCheese', 1)], [C('fullChicken', 2)], [C('fullDeluxe', 3)]], R4), 'Alle drei fertig = Sieg');
 
+const asg = E.assignRecipes([[C('beefCheese', 1)], [C('saladTomato', 2)]], R4);
+assert(asg[0] === 0 && asg[1] === 1, 'Speisekarte hakt Cheese-Patty beim Cheeseburger und Salat+Tomate beim Chicken ab');
+
 console.log(`${games} Partien, ${steps} Spielschritte, ${stuck} ohne Sieger (Limit erreicht)`);
 console.log('Siege nach Spielerzahl:', wins);
 console.log('Regeltests ok');
