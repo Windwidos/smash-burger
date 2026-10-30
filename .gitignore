@@ -1,3 +1,6 @@
 node_modules/
 *.log
 *.err
+app/node_modules/
+app/www/
+release/

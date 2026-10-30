@@ -1,0 +1,8 @@
+{
+  "appId": "com.duoh.smashburger",
+  "appName": "Smash Burger",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#FFF6EA"
+  }
+}

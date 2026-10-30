@@ -6,6 +6,8 @@
   const app = document.getElementById('app');
   const sheet = document.getElementById('sheet');
   const toastEl = document.getElementById('toast');
+  const CONFIG = window.SMASH_CONFIG || {};
+  const SERVER = CONFIG.server || '';
   const LS_SESSION = 'smashburger.session';
   const LS_NAME = 'smashburger.name';
 
@@ -26,8 +28,22 @@
 
   // ---------- Netzwerk ----------
 
+  // The free server sleeps when idle; show a hint while the first request wakes it up.
+  let serverAwake = false;
+  let wakeHintTimer = null;
+  function wakeServer() {
+    wakeHintTimer = setTimeout(() => {
+      if (!serverAwake) toast('Server wird geweckt … das kann bis zu einer Minute dauern.', 60000);
+    }, 2500);
+    fetch(SERVER + '/api/health').then(() => {
+      serverAwake = true;
+      clearTimeout(wakeHintTimer);
+      if (!toastEl.classList.contains('hidden') && toastEl.textContent.startsWith('Server wird')) toastEl.classList.add('hidden');
+    }).catch(() => setTimeout(wakeServer, 5000));
+  }
+
   async function post(path, body) {
-    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const r = await fetch(SERVER + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     let j = {};
     try { j = await r.json(); } catch { /* ignore */ }
     if (!r.ok || j.error) throw new Error(j.error || 'Verbindungsproblem');
@@ -43,7 +59,7 @@
   function connect() {
     if (es) es.close();
     const q = new URLSearchParams(session).toString();
-    es = new EventSource('/api/events?' + q);
+    es = new EventSource(SERVER + '/api/events?' + q);
     es.onmessage = e => {
       view = JSON.parse(e.data);
       onView();
@@ -173,6 +189,7 @@
           <span>2–6 Personen</span><span>ab 8</span><span>ca. 20 Min.</span>
         </div>
         <button class="link" data-do="rules">📖 Spielregeln</button>
+        <a class="link small" href="${esc((SERVER ? CONFIG.publicUrl : '') + '/datenschutz.html')}" target="_blank" rel="noopener">Datenschutz</a>
       </div>`;
   }
 
@@ -433,11 +450,11 @@
   // ---------- Toast ----------
 
   let toastTimer;
-  function toast(msg) {
+  function toast(msg, ms) {
     toastEl.textContent = msg;
     toastEl.classList.remove('hidden');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastEl.classList.add('hidden'), 2600);
+    toastTimer = setTimeout(() => toastEl.classList.add('hidden'), ms || 2600);
   }
 
   // ---------- Zustand ----------
@@ -463,7 +480,8 @@
   }
 
   async function share() {
-    const url = `${location.origin}/?room=${view.code}`;
+    const base = SERVER ? CONFIG.publicUrl : location.origin;
+    const url = `${base}/?room=${view.code}`;
     const text = `Komm an meinen Smash-Burger-Tisch! Code: ${view.code}`;
     if (navigator.share) {
       try { await navigator.share({ title: 'Smash Burger', text, url }); return; } catch { /* abgebrochen */ }
@@ -657,6 +675,26 @@
     if (e.key === 'Enter' && e.target.id === 'code') enter('/api/join');
   });
 
+  // Android back button (in the app): close sheets / cancel the move first, only then leave the app.
+  const capApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (capApp) {
+    capApp.addListener('backButton', () => {
+      if (sheetKind && sheetKind !== 'lock') {
+        closeSheet();
+        ui = freshUi();
+        return render();
+      }
+      if (ui.sel || ui.mode) {
+        ui = freshUi();
+        return render();
+      }
+      capApp.minimizeApp();
+    });
+    // Reconnect when the app comes back from the background.
+    capApp.addListener('resume', () => { if (session) connect(); });
+  }
+
+  wakeServer();
   if (session) connect();
   render();
 })();

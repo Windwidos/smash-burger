@@ -47,6 +47,7 @@ small { color: var(--muted); font-weight: 500; }
 .btn small { color: inherit; opacity: .7; font-weight: 600; }
 .link { background: none; border: 0; color: var(--orange-d); font-weight: 800; padding: 8px; }
 .link.danger { color: var(--red); }
+.link.small { display: block; font-size: 12px; color: var(--muted); text-decoration: none; margin-top: 4px; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .btn-row.center { justify-content: center; }
 .col { display: flex; flex-direction: column; gap: 10px; }
@@ -55,7 +56,7 @@ small { color: var(--muted); font-weight: 500; }
 /* ---------- Logo / Home / Lobby ---------- */
 .logo {
   font-family: 'Fredoka', sans-serif; font-weight: 700; text-align: center;
-  font-size: 56px; line-height: .9; letter-spacing: 1px;
+  font-size: 48px; line-height: .9; letter-spacing: 1px;
   color: #fff; -webkit-text-stroke: 2.5px var(--ink); paint-order: stroke fill;
   background: radial-gradient(circle at 50% 45%, #F8B57D 0 60%, var(--orange) 61% 100%);
   border: 3px solid var(--ink); border-radius: 50%;

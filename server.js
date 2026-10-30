@@ -20,6 +20,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png',
   '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8',
 };
 
 function newCode() {
@@ -267,6 +268,13 @@ async function handleApi(req, res, url) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname.startsWith('/api/')) {
+    // The Android app loads its UI locally and talks to this server cross-origin.
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '86400' });
+      return res.end();
+    }
+    if (url.pathname === '/api/health') return json(res, 200, { ok: true });
     handleApi(req, res, url).catch(e => {
       console.error(e);
       if (!res.headersSent) json(res, 500, { error: 'Serverfehler' });
