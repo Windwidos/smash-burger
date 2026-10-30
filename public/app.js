@@ -46,8 +46,20 @@
     const r = await fetch(SERVER + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     let j = {};
     try { j = await r.json(); } catch { /* ignore */ }
-    if (!r.ok || j.error) throw new Error(j.error || 'Verbindungsproblem');
+    if (!r.ok || j.error) {
+      const err = new Error(j.error || 'Verbindungsproblem');
+      err.view = j.view;
+      throw err;
+    }
     return j;
+  }
+
+  // Views arrive both over the live connection and as action replies; never go back to an older one.
+  function applyView(v) {
+    if (!v) return;
+    if (view && v.code === view.code && v.version < view.version) return;
+    view = v;
+    onView();
   }
 
   function saveSession(s) {
@@ -60,10 +72,12 @@
     if (es) es.close();
     const q = new URLSearchParams(session).toString();
     es = new EventSource(SERVER + '/api/events?' + q);
+    lastMsg = Date.now();
     es.onmessage = e => {
-      view = JSON.parse(e.data);
-      onView();
+      lastMsg = Date.now();
+      applyView(JSON.parse(e.data));
     };
+    es.addEventListener('ping', () => { lastMsg = Date.now(); });
     es.addEventListener('gone', () => {
       es.close();
       es = null;
@@ -79,8 +93,23 @@
     ui = freshUi();
     if (sheetKind === 'ctx') closeSheet();
     render();
-    return post('/api/action', { ...session, action }).catch(e => toast(e.message));
+    return post('/api/action', { ...session, action })
+      .then(j => applyView(j.view))
+      .catch(e => {
+        applyView(e.view);
+        toast(e.message);
+      });
   }
+
+  // Phones silently drop live connections (screen off, network switch): reconnect when pings stop.
+  let lastMsg = 0;
+  setInterval(() => {
+    if (session && es && Date.now() - lastMsg > 25000) connect();
+  }, 5000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && session) connect();
+  });
+  window.addEventListener('online', () => { if (session) connect(); });
 
   // ---------- Hilfsfunktionen ----------
 

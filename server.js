@@ -46,6 +46,7 @@ function roomView(room, idx) {
   const st = room.state;
   return {
     code: room.code,
+    version: room.version || 0,
     phase: st ? 'game' : 'lobby',
     you: idx,
     host: room.players.findIndex(p => p.pid === room.hostPid),
@@ -58,6 +59,7 @@ function roomView(room, idx) {
 
 function broadcast(room) {
   room.updated = Date.now();
+  room.version = (room.version || 0) + 1;
   room.players.forEach((p, i) => {
     if (!p.clients.size) return;
     const msg = `data: ${JSON.stringify(roomView(room, i))}\n\n`;
@@ -108,8 +110,9 @@ setInterval(() => {
 }, 3000);
 
 setInterval(() => {
-  for (const room of rooms.values()) for (const p of room.players) for (const res of p.clients) res.write(': ping\n\n');
-}, 15000);
+  // A named event (not a comment) so the browser can notice when pings stop arriving.
+  for (const room of rooms.values()) for (const p of room.players) for (const res of p.clients) res.write('event: ping\ndata: {}\n\n');
+}, 10000);
 
 function auth(body) {
   const room = rooms.get(String(body.code || '').toUpperCase());
@@ -254,12 +257,14 @@ async function handleApi(req, res, url) {
         err = r.ok ? null : r.error;
       }
     }
-    if (err) return json(res, 400, { error: err });
+    if (err) return json(res, 400, { error: err, view: roomView(room, idx) });
     if (rooms.has(room.code)) {
       broadcast(room);
       schedule(room);
     }
-    return json(res, 200, { ok: true });
+    // Send the caller's new view directly, so a stalled live connection can't leave them on an old state.
+    const still = rooms.has(room.code) ? room.players.indexOf(player) : -1;
+    return json(res, 200, { ok: true, view: still >= 0 ? roomView(room, still) : null });
   }
 
   json(res, 404, { error: 'Nicht gefunden' });
