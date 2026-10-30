@@ -58,6 +58,17 @@ assert(E.trayDone([[C('fullCheese', 1)], [C('fullChicken', 2)], [C('fullDeluxe',
 const asg = E.assignRecipes([[C('beefCheese', 1)], [C('saladTomato', 2)]], R4);
 assert(asg[0] === 0 && asg[1] === 1, 'Speisekarte hakt Cheese-Patty beim Cheeseburger und Salat+Tomate beim Chicken ab');
 
+// Tutorial: vorbereitete Hand, sanfter Bot greift nie an
+const tut = E.newGame(['Du', 'Kalle'], 0, rngFrom(7), { rig: { 0: ['beef', 'cheese', 'salad', 'bun', 'tomato', 'steal'] }, gentle: [1] });
+assert(tut.players[0].hand.map(c => c.t).join() === 'beef,cheese,salad', 'Tutorial-Starthand');
+for (let i = 0; i < 400 && tut.winner == null; i++) {
+  const p = tut.current;
+  const a = E.botStep(tut, p);
+  if (p === 1) assert(!['burn', 'steal', 'swap'].includes(a.type), 'Sanfter Bot greift nicht an');
+  assert(E.act(tut, p, a).ok, 'Tutorial-Zug gültig');
+}
+assert(E.levelInfo(0).level === 1 && E.levelInfo(100).level === 2 && E.levelInfo(225).level === 3, 'Level-Kurve');
+
 console.log(`${games} Partien, ${steps} Spielschritte, ${stuck} ohne Sieger (Limit erreicht)`);
 console.log('Siege nach Spielerzahl:', wins);
 console.log('Regeltests ok');

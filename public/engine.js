@@ -149,8 +149,34 @@
     return a;
   }
 
-  function newGame(names, startIdx, rng) {
+  // ---------- Level ----------
+
+  const TITLES = [
+    [1, 'Tellerwäscher:in'], [3, 'Küchenhilfe'], [6, 'Burgerbrater:in'], [10, 'Grillmeister:in'],
+    [15, 'Küchenchef:in'], [22, 'Sterneköch:in'], [30, 'Burger-Legende'],
+  ];
+
+  function xpToNext(level) {
+    return 100 + (level - 1) * 25;
+  }
+
+  function levelInfo(xp) {
+    let level = 1, rest = xp || 0;
+    while (rest >= xpToNext(level)) { rest -= xpToNext(level); level++; }
+    let title = TITLES[0][1];
+    for (const [l, t] of TITLES) if (level >= l) title = t;
+    return { level, into: rest, need: xpToNext(level), title };
+  }
+
+  // XP for one finished game: everybody gets something, finished burgers and the win count extra.
+  function gameXp(won, burgers, players) {
+    return 20 + burgers * 15 + (won ? 40 + 10 * (players - 2) : 0);
+  }
+
+  // opts.rig: { playerIdx: [card types to deal/draw first] } (tutorial), opts.gentle: bot indices that never attack.
+  function newGame(names, startIdx, rng, opts) {
     rng = rng || Math.random;
+    opts = opts || {};
     const n = names.length;
     const s = {
       recipes: n <= 3 ? [0, 1, 2, 3] : [0, 1, 2],
@@ -164,8 +190,10 @@
       turn: 1,
       log: [],
       logSeq: 0,
+      rig: opts.rig || null,
+      gentle: opts.gentle || [],
     };
-    for (let k = 0; k < HAND_SIZE; k++) for (const p of s.players) p.hand.push(s.deck.pop());
+    for (let k = 0; k < HAND_SIZE; k++) s.players.forEach((p, i) => p.hand.push(drawFor(s, i)));
     log(s, `${s.players[s.current].name} beginnt. Guten Appetit!`);
     return s;
   }
@@ -186,10 +214,21 @@
     return s.deck.pop();
   }
 
+  // Rigged draws (tutorial) pull a card of the wanted type out of the deck, otherwise a normal draw.
+  function drawFor(s, p) {
+    const want = s.rig && s.rig[p];
+    while (want && want.length) {
+      const t = want.shift();
+      const i = s.deck.findIndex(c => c.t === t);
+      if (i >= 0) return s.deck.splice(i, 1)[0];
+    }
+    return draw(s);
+  }
+
   function endTurn(s) {
     const me = s.players[s.current];
     while (me.hand.length < HAND_SIZE) {
-      const c = draw(s);
+      const c = drawFor(s, s.current);
       if (!c) break;
       me.hand.push(c);
     }
@@ -455,10 +494,13 @@
     let best = null;
     const consider = (sc, a) => { if (!best || sc > best.sc) best = { sc, a }; };
 
+    const gentle = s.gentle && s.gentle.includes(p);
     for (const c of me.hand) {
       const def = TYPES[c.t];
       if (def.kind === 'ing') {
         for (const tg of placeTargets(me.tray, [c], R)) consider(placeScore(me.tray, [c], tg, R), { type: 'place', cardId: c.id, stack: tg });
+      } else if (gentle && c.t !== 'dig') {
+        continue;
       } else if (c.t === 'burn') {
         s.players.forEach((o, q) => {
           if (q === p) return;
@@ -495,6 +537,9 @@
     }
     if (best && best.sc > 8) return best.a;
 
+    // A gentle (tutorial) bot throws its attack cards away instead of using them.
+    const attack = gentle && me.hand.find(c => TYPES[c.t].kind === 'act' && c.t !== 'dig');
+    if (attack) return { type: 'discard', cardId: attack.id };
     const useless = me.hand.filter(c => !useful(c, me.tray, R));
     if (useless.length) return { type: 'discard', cardId: useless[0].id };
     if (s.played === 0) {
@@ -508,5 +553,6 @@
     MAX_PLAYS, HAND_SIZE, LAYERS, TYPES, RECIPES,
     layersOf, candidates, completeRecipe, trayValid, assignRecipes, withAdded, placeTargets, trayDone, completedCount,
     makeDeck, newGame, act, viewFor, botStep, digOptions,
+    TITLES, xpToNext, levelInfo, gameXp,
   };
 });

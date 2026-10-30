@@ -5,4 +5,10 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: npm start
-    healthCheckPath: /
+    healthCheckPath: /api/health
+    envVars:
+      # Spielerprofile (Level/XP) in Supabase – Werte im Render-Dashboard eintragen, nicht ins Repo.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false

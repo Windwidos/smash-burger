@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
 const E = require('./public/engine.js');
+const Profiles = require('./profiles.js');
 
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC = path.join(__dirname, 'public');
@@ -13,14 +14,26 @@ const BOT_DELAY = 1100;
 const AUTOPILOT_AFTER = 25000; // a disconnected player's turn is played by a bot after this
 const ROOM_TTL = 6 * 60 * 60 * 1000;
 const BOT_NAMES = ['Bot Bernd', 'Bot Paula', 'Bot Kalle', 'Bot Uschi', 'Bot Ronja', 'Bot Heinz', 'Bot Frieda'];
+const TUTORIAL_BOT = 'Koch Kalle';
+// Tutorial: the learner gets a hand that teaches the basics, then the first draws.
+const TUTORIAL_RIG = ['beef', 'cheese', 'salad', 'bun', 'tomato', 'steal', 'chicken', 'bun', 'burn'];
+const TUTORIAL_BONUS_XP = 50;
+
+// Matchmaking: level range starts narrow and widens the longer someone waits.
+const MM_TICK = 1500;
+const MM_TARGET = 4;
+const MM_SMALL_GAME_AFTER = 20000; // start with 2–3 players after this
+const MM_BOTS_AFTER = 35000; // nobody there: play with bots
+const MM_RANGE = waited => 2 + 2 * Math.floor(waited / 10000);
 
 const rooms = new Map();
+const queue = new Map(); // profileId -> entry
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png',
   '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8',
+  '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.webp': 'image/webp', '.jpg': 'image/jpeg',
 };
 
 function newCode() {
@@ -31,11 +44,27 @@ function newCode() {
   return c;
 }
 
-function newPlayer(name, isBot) {
+function newPlayer(name, isBot, profile, level) {
   return {
     pid: crypto.randomUUID(), token: crypto.randomBytes(16).toString('hex'),
     name, isBot, clients: new Set(), disconnectedAt: Date.now(),
+    profile: profile || null,
+    level: profile ? E.levelInfo(profile.xp).level : (level || 1),
   };
+}
+
+function newBot(room, level) {
+  const used = new Set(room.players.map(p => p.name));
+  return newPlayer(BOT_NAMES.find(n => !used.has(n)) || 'Bot', true, null, level);
+}
+
+function newRoom(kind, players) {
+  const room = {
+    code: newCode(), kind, players, hostPid: players[0].pid,
+    state: null, timer: null, updated: Date.now(), results: null,
+  };
+  rooms.set(room.code, room);
+  return room;
 }
 
 function cleanName(n) {
@@ -46,18 +75,49 @@ function roomView(room, idx) {
   const st = room.state;
   return {
     code: room.code,
+    kind: room.kind,
     version: room.version || 0,
     phase: st ? 'game' : 'lobby',
     you: idx,
     host: room.players.findIndex(p => p.pid === room.hostPid),
     players: room.players.map(p => ({
-      name: p.name, isBot: p.isBot, connected: p.isBot || p.clients.size > 0,
+      name: p.name, isBot: p.isBot, connected: p.isBot || p.clients.size > 0, level: p.level,
     })),
     game: st ? E.viewFor(st, idx) : null,
+    result: room.results ? room.results[idx] : null,
   };
 }
 
+// Hands out XP once when a game has a winner.
+function settle(room) {
+  const st = room.state;
+  if (!st || st.winner == null || room.results) return;
+  const n = room.players.length;
+  room.results = room.players.map((p, i) => {
+    if (p.isBot || !p.profile) return null;
+    const prof = p.profile;
+    const won = st.winner === i;
+    const burgers = E.completedCount(st.players[i].tray, st.recipes);
+    let xp = E.gameXp(won, burgers, n);
+    let bonus = 0;
+    if (room.kind === 'tutorial') {
+      bonus = room.tutorialBonus ? TUTORIAL_BONUS_XP : 0;
+      xp += bonus;
+      prof.tutorialDone = true;
+    }
+    const before = E.levelInfo(prof.xp);
+    prof.xp += xp;
+    prof.games += 1;
+    if (won) prof.wins += 1;
+    const after = E.levelInfo(prof.xp);
+    p.level = after.level;
+    Profiles.save(prof).catch(e => console.error('Profil speichern:', e.message));
+    return { xp, won, burgers, bonus, before, after, totalXp: prof.xp };
+  });
+}
+
 function broadcast(room) {
+  settle(room);
   room.updated = Date.now();
   room.version = (room.version || 0) + 1;
   room.players.forEach((p, i) => {
@@ -79,6 +139,8 @@ function schedule(room) {
   room.timerActive = false;
   if (!needsAutopilot(room)) return;
   room.timerActive = true;
+  // The tutorial cook plays slower so there is time to read.
+  const delay = room.kind === 'tutorial' ? BOT_DELAY * 1.6 : BOT_DELAY;
   room.timer = setTimeout(() => {
     room.timerActive = false;
     const st = room.state;
@@ -92,10 +154,15 @@ function schedule(room) {
     }
     broadcast(room);
     schedule(room);
-  }, BOT_DELAY);
+  }, delay);
 }
 
-// Picks up turns of players who dropped their connection.
+function startGame(room, opts) {
+  room.results = null;
+  room.state = E.newGame(room.players.map(p => p.name), opts && opts.start, null, opts);
+}
+
+// Picks up turns of players who dropped their connection, cleans up old tables.
 setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
@@ -113,6 +180,45 @@ setInterval(() => {
   // A named event (not a comment) so the browser can notice when pings stop arriving.
   for (const room of rooms.values()) for (const p of room.players) for (const res of p.clients) res.write('event: ping\ndata: {}\n\n');
 }, 10000);
+
+// ---------- Matchmaking ----------
+
+function matchmake() {
+  const now = Date.now();
+  for (const [id, e] of queue) {
+    if (now - e.lastPoll > 15000) queue.delete(id); // closed the app while waiting
+  }
+  const waiting = [...queue.values()].filter(e => !e.match).sort((a, b) => a.since - b.since);
+  for (const e of waiting) {
+    if (e.match) continue;
+    const waited = now - e.since;
+    const range = MM_RANGE(waited);
+    const group = waiting.filter(o => !o.match && Math.abs(o.level - e.level) <= range).slice(0, MM_TARGET);
+    let take = null;
+    if (group.length >= MM_TARGET) take = group;
+    else if (waited >= MM_SMALL_GAME_AFTER && group.length >= 2) take = group;
+    else if (waited >= MM_BOTS_AFTER) take = group;
+    if (!take) continue;
+    const players = take.map(o => newPlayer(o.profile.name, false, o.profile));
+    const room = newRoom('quick', players);
+    const avg = Math.round(players.reduce((s, p) => s + p.level, 0) / players.length);
+    while (room.players.length < 3) room.players.push(newBot(room, Math.max(1, avg + crypto.randomInt(-1, 2))));
+    startGame(room);
+    take.forEach((o, i) => { o.match = { code: room.code, pid: players[i].pid, token: players[i].token }; });
+    schedule(room);
+  }
+}
+setInterval(matchmake, MM_TICK);
+
+function queueStatus(e) {
+  if (e.match) return { state: 'matched', ...e.match };
+  const waited = Date.now() - e.since;
+  const range = MM_RANGE(waited);
+  const near = [...queue.values()].filter(o => !o.match && Math.abs(o.level - e.level) <= range).length;
+  return { state: 'waiting', waited, range, near, botsIn: Math.max(0, Math.ceil((MM_BOTS_AFTER - waited) / 1000)) };
+}
+
+// ---------- HTTP ----------
 
 function auth(body) {
   const room = rooms.get(String(body.code || '').toUpperCase());
@@ -146,8 +252,7 @@ function handleLobbyAction(room, idx, a) {
       if (!isHost) return 'Nur der Gastgeber kann Bots hinzufügen.';
       if (room.state) return 'Das Spiel läuft schon.';
       if (room.players.length >= MAX_PLAYERS) return 'Der Tisch ist voll (max. 6).';
-      const used = new Set(room.players.map(p => p.name));
-      room.players.push(newPlayer(BOT_NAMES.find(n => !used.has(n)) || 'Bot', true));
+      room.players.push(newBot(room, room.players[idx].level));
       return null;
     }
     case 'kick': {
@@ -163,13 +268,15 @@ function handleLobbyAction(room, idx, a) {
       if (!isHost) return 'Nur der Gastgeber kann starten.';
       if (room.state) return 'Das Spiel läuft schon.';
       if (room.players.length < 2) return 'Ihr braucht mindestens 2 Leute (oder einen Bot).';
-      room.state = E.newGame(room.players.map(p => p.name));
+      startGame(room);
       return null;
     }
     case 'restart': {
+      if (room.kind !== 'private') return 'Starte ein neues Spiel über das Hauptmenü.';
       if (!isHost) return 'Nur der Gastgeber kann neu starten.';
       if (room.state && room.state.winner == null) return 'Das Spiel läuft noch.';
       room.state = null;
+      room.results = null;
       room.players = room.players.filter(p => p.isBot || p.clients.size || p.pid === room.hostPid);
       return null;
     }
@@ -181,19 +288,23 @@ function handleLobbyAction(room, idx, a) {
         me.isBot = true;
         me.name = `${me.name} (Bot)`;
         room.state.players[idx].name = me.name;
+      } else if (room.state && room.kind !== 'private') {
+        me.left = true; // quick match / tutorial over: others keep their result screen
       } else {
         room.players.splice(idx, 1);
-        if (room.state) room.state = null;
+        if (room.state) { room.state = null; room.results = null; }
       }
-      if (me.pid === room.hostPid) {
-        const next = room.players.find(p => !p.isBot);
-        if (!next) { clearTimeout(room.timer); rooms.delete(room.code); return null; }
-        room.hostPid = next.pid;
-      }
+      const next = room.players.find(p => !p.isBot && !p.left);
+      if (!next) { clearTimeout(room.timer); rooms.delete(room.code); return null; }
+      if (me.pid === room.hostPid) room.hostPid = next.pid;
       return null;
     }
   }
   return undefined;
+}
+
+async function profileFrom(body) {
+  return Profiles.auth(body.profileId, body.profileToken);
 }
 
 async function handleApi(req, res, url) {
@@ -222,27 +333,90 @@ async function handleApi(req, res, url) {
   let body;
   try { body = await readBody(req); } catch { return json(res, 400, { error: 'Ungültige Anfrage' }); }
 
-  if (url.pathname === '/api/create') {
+  // --- Profil ---
+  if (url.pathname === '/api/profile/create') {
     const name = cleanName(body.name);
     if (!name) return json(res, 400, { error: 'Bitte gib deinen Namen ein.' });
-    const code = newCode();
-    const p = newPlayer(name, false);
-    rooms.set(code, { code, players: [p], hostPid: p.pid, state: null, timer: null, updated: Date.now() });
-    return json(res, 200, { code, pid: p.pid, token: p.token });
+    const { profile, token } = await Profiles.create(name);
+    return json(res, 200, { profile: Profiles.publicView(profile), token });
+  }
+  if (url.pathname === '/api/profile/get') {
+    const prof = await profileFrom(body);
+    if (!prof) return json(res, 404, { error: 'Profil nicht gefunden.', missing: true });
+    return json(res, 200, { profile: Profiles.publicView(prof) });
+  }
+  if (url.pathname === '/api/profile/update') {
+    const prof = await profileFrom(body);
+    if (!prof) return json(res, 404, { error: 'Profil nicht gefunden.', missing: true });
+    if (body.name != null) {
+      const name = cleanName(body.name);
+      if (!name) return json(res, 400, { error: 'Bitte gib deinen Namen ein.' });
+      prof.name = name;
+    }
+    if (body.tutorialDone === true) prof.tutorialDone = true;
+    await Profiles.save(prof);
+    return json(res, 200, { profile: Profiles.publicView(prof) });
+  }
+
+  // Everything below needs a profile.
+  const prof = await profileFrom(body);
+
+  if (url.pathname === '/api/create') {
+    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    const p = newPlayer(prof.name, false, prof);
+    const room = newRoom('private', [p]);
+    return json(res, 200, { code: room.code, pid: p.pid, token: p.token });
   }
 
   if (url.pathname === '/api/join') {
-    const name = cleanName(body.name);
+    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
     const room = rooms.get(String(body.code || '').toUpperCase().trim());
-    if (!name) return json(res, 400, { error: 'Bitte gib deinen Namen ein.' });
-    if (!room) return json(res, 404, { error: 'Diesen Tisch gibt es nicht.' });
+    if (!room || room.kind !== 'private') return json(res, 404, { error: 'Diesen Tisch gibt es nicht.' });
     if (room.state) return json(res, 409, { error: 'An diesem Tisch läuft schon ein Spiel.' });
     if (room.players.length >= MAX_PLAYERS) return json(res, 409, { error: 'Der Tisch ist voll (max. 6).' });
-    if (room.players.some(p => p.name.toLowerCase() === name.toLowerCase())) return json(res, 409, { error: 'Der Name ist schon vergeben.' });
-    const p = newPlayer(name, false);
+    const mine = room.players.find(p => p.profile && p.profile.id === prof.id);
+    if (mine) return json(res, 200, { code: room.code, pid: mine.pid, token: mine.token });
+    let name = prof.name;
+    if (room.players.some(p => p.name.toLowerCase() === name.toLowerCase())) name = `${name} ${room.players.length + 1}`;
+    const p = newPlayer(name, false, prof);
     room.players.push(p);
     broadcast(room);
     return json(res, 200, { code: room.code, pid: p.pid, token: p.token });
+  }
+
+  if (url.pathname === '/api/tutorial') {
+    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    const p = newPlayer(prof.name, false, prof);
+    const room = newRoom('tutorial', [p, newPlayer(TUTORIAL_BOT, true, null, 1)]);
+    room.tutorialBonus = !prof.tutorialDone; // the bonus is paid for the first finished tutorial only
+    startGame(room, { start: 0, rig: { 0: TUTORIAL_RIG.slice() }, gentle: [1] });
+    return json(res, 200, { code: room.code, pid: p.pid, token: p.token });
+  }
+
+  if (url.pathname === '/api/quick/join') {
+    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    let e = queue.get(prof.id);
+    if (!e || e.match) {
+      e = { profile: prof, level: E.levelInfo(prof.xp).level, since: Date.now(), lastPoll: Date.now(), match: null };
+      queue.set(prof.id, e);
+    }
+    return json(res, 200, queueStatus(e));
+  }
+  if (url.pathname === '/api/quick/status') {
+    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    const e = queue.get(prof.id);
+    if (!e) return json(res, 200, { state: 'none' });
+    e.lastPoll = Date.now();
+    const st = queueStatus(e);
+    if (e.match) queue.delete(prof.id);
+    return json(res, 200, st);
+  }
+  if (url.pathname === '/api/quick/leave') {
+    if (prof) {
+      const e = queue.get(prof.id);
+      if (e && !e.match) queue.delete(prof.id);
+    }
+    return json(res, 200, { ok: true });
   }
 
   if (url.pathname === '/api/action') {
@@ -288,7 +462,7 @@ const server = http.createServer((req, res) => {
   }
   let file = path.normalize(path.join(PUBLIC, decodeURIComponent(url.pathname)));
   if (!file.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
-  if (url.pathname === '/' ) file = path.join(PUBLIC, 'index.html');
+  if (url.pathname === '/') file = path.join(PUBLIC, 'index.html');
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end('Nicht gefunden'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
@@ -298,6 +472,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🍔 Smash Burger läuft auf http://localhost:${PORT}`);
+  console.log(`   Profile: ${Profiles.usingSupabase ? 'Supabase' : 'lokale Datei data/profiles.json'}`);
   for (const list of Object.values(os.networkInterfaces())) {
     for (const ni of list || []) {
       if (ni.family === 'IPv4' && !ni.internal && !ni.address.startsWith('169.254')) {

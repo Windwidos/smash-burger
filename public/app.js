@@ -10,9 +10,16 @@
   const SERVER = CONFIG.server || '';
   const LS_SESSION = 'smashburger.session';
   const LS_NAME = 'smashburger.name';
+  const LS_PROFILE = 'smashburger.profile';
+  const LS_TUT = 'smashburger.tutstep';
 
   let session = null;
   try { session = JSON.parse(localStorage.getItem(LS_SESSION)); } catch { /* ignore */ }
+  let profileKey = null; // { id, token } – identifies this device's player
+  try { profileKey = JSON.parse(localStorage.getItem(LS_PROFILE)); } catch { /* ignore */ }
+  let profile = null; // latest profile data from the server (name, xp, …)
+  let profileLoading = !!profileKey;
+  let mm = null; // quick-match search state
   let view = null;
   let es = null;
   let ui = freshUi();
@@ -111,6 +118,127 @@
   });
   window.addEventListener('online', () => { if (session) connect(); });
 
+  // ---------- Profil & Level ----------
+
+  const withProfile = body => ({ ...body, profileId: profileKey && profileKey.id, profileToken: profileKey && profileKey.token });
+
+  function dropProfile() {
+    profileKey = null;
+    profile = null;
+    localStorage.removeItem(LS_PROFILE);
+  }
+
+  async function loadProfile() {
+    if (!profileKey) { profileLoading = false; return render(); }
+    try {
+      profile = (await post('/api/profile/get', withProfile({}))).profile;
+    } catch (e) {
+      if (/Profil/.test(e.message)) dropProfile();
+      else setTimeout(loadProfile, 4000); // server still waking up
+    }
+    profileLoading = false;
+    if (!session) render();
+  }
+
+  async function createProfile() {
+    const name = (document.getElementById('name').value || '').trim();
+    if (!name) return toast('Bitte gib deinen Namen ein.');
+    try {
+      const r = await post('/api/profile/create', { name });
+      profileKey = { id: r.profile.id, token: r.token };
+      localStorage.setItem(LS_PROFILE, JSON.stringify(profileKey));
+      localStorage.setItem(LS_NAME, name);
+      profile = r.profile;
+      render();
+    } catch (e) {
+      toast(e.message);
+    }
+  }
+
+  function levelBadge(level) {
+    return `<span class="lv" title="Level ${level}">${level}</span>`;
+  }
+
+  function xpBar(info, cls) {
+    return `<div class="xpbar ${cls || ''}"><i style="width:${Math.round(info.into / info.need * 100)}%"></i><span>${info.into} / ${info.need} XP</span></div>`;
+  }
+
+  // Server answered "profile missing": start over with a new profile.
+  function handleMissing(e) {
+    if (e && /neu an/.test(e.message)) {
+      dropProfile();
+      render();
+      return true;
+    }
+    return false;
+  }
+
+  async function joinTable(path, body) {
+    try {
+      const r = await post(path, withProfile(body || {}));
+      saveSession(r);
+      closeSheet();
+      history.replaceState(null, '', '?room=' + r.code);
+      connect();
+    } catch (e) {
+      if (!handleMissing(e)) toast(e.message);
+    }
+  }
+
+  // ---------- Schnelles Spiel (Matchmaking) ----------
+
+  let mmTimer = null;
+  async function startQuick() {
+    try {
+      mm = { status: await post('/api/quick/join', withProfile({})) };
+      render();
+      pollQuick();
+    } catch (e) {
+      if (!handleMissing(e)) toast(e.message);
+    }
+  }
+
+  async function pollQuick() {
+    clearTimeout(mmTimer);
+    if (!mm) return;
+    try {
+      const st = await post('/api/quick/status', withProfile({}));
+      if (!mm) return;
+      if (st.state === 'matched') {
+        mm = null;
+        saveSession({ code: st.code, pid: st.pid, token: st.token });
+        history.replaceState(null, '', '?room=' + st.code);
+        connect();
+        return;
+      }
+      if (st.state === 'none') return startQuick();
+      mm.status = st;
+      render();
+    } catch { /* try again */ }
+    mmTimer = setTimeout(pollQuick, 1500);
+  }
+
+  function cancelQuick() {
+    clearTimeout(mmTimer);
+    mm = null;
+    post('/api/quick/leave', withProfile({})).catch(() => {});
+    render();
+  }
+
+  function leaveTable() {
+    const done = post('/api/action', { ...session, action: { type: 'leave' } }).catch(() => {});
+    if (es) es.close();
+    es = null;
+    saveSession(null);
+    view = null;
+    tutStep = null;
+    closeSheet();
+    hideCoach();
+    history.replaceState(null, '', '/');
+    render();
+    return done.then(loadProfile);
+  }
+
   // ---------- Hilfsfunktionen ----------
 
   const game = () => view && view.game;
@@ -191,35 +319,127 @@
 
   function render() {
     document.body.classList.toggle('in-game', !!game());
-    if (!session || !view) return renderHome();
-    if (view.phase === 'lobby') return renderLobby();
-    renderGame();
+    if (session && view) {
+      if (view.phase === 'lobby') renderLobby();
+      else renderGame();
+      return renderCoach();
+    }
+    hideCoach();
+    if (profileLoading) return renderLoading();
+    if (!profile) return renderOnboarding();
+    if (mm) return renderMatching();
+    renderHome();
+  }
+
+  const roomParam = () => (new URLSearchParams(location.search).get('room') || '').toUpperCase();
+  const privacyUrl = () => (SERVER ? CONFIG.publicUrl : '') + '/datenschutz.html';
+
+  function renderLoading() {
+    app.innerHTML = `<div class="home"><img class="logo-img" src="img/logo.png" alt="Smash Burger"><p class="wait">Küche wird vorgeheizt …</p></div>`;
+  }
+
+  function renderOnboarding() {
+    app.innerHTML = `
+      <div class="home">
+        <img class="logo-img" src="img/logo.png" alt="Smash Burger">
+        <p class="tagline">Bereite deinen Burger zu.<br><b>Smashe die Konkurrenz.</b></p>
+        <div class="panel chef-panel">
+          <img class="chef-peek" src="img/chef-wave.png" alt="">
+          <h2>Willkommen in der Küche!</h2>
+          <p class="note">Wie sollen dich die anderen nennen?</p>
+          <input id="name" maxlength="18" autocomplete="nickname" value="${esc(localStorage.getItem(LS_NAME) || '')}" placeholder="Dein Name">
+          <button class="btn primary big" data-do="onboard">Los geht's!</button>
+        </div>
+        <a class="link small" href="${esc(privacyUrl())}" target="_blank" rel="noopener">Datenschutz</a>
+      </div>`;
   }
 
   function renderHome() {
-    const params = new URLSearchParams(location.search);
-    const room = (params.get('room') || '').toUpperCase();
+    const info = E.levelInfo(profile.xp);
+    const room = roomParam();
     app.innerHTML = `
       <div class="home">
-        <div class="logo"><span>SMASH</span><span>BURGER</span></div>
-        <p class="tagline">Bereite deinen Burger zu.<br><b>Smashe die Konkurrenz.</b></p>
-        <div class="panel">
-          <label class="field">Dein Name
-            <input id="name" maxlength="18" autocomplete="nickname" value="${esc(localStorage.getItem(LS_NAME) || '')}" placeholder="z. B. Jean">
-          </label>
-          ${room ? '' : '<button class="btn primary big" data-do="create">Neuen Tisch eröffnen</button><div class="or">oder einem Tisch beitreten</div>'}
-          <div class="join-row">
-            <input id="code" maxlength="4" placeholder="CODE" value="${esc(room)}" autocapitalize="characters">
-            <button class="btn ${room ? 'primary' : ''}" data-do="join">Beitreten</button>
+        <img class="logo-img small" src="img/logo.png" alt="Smash Burger">
+        <div class="profile-card">
+          <div class="pc-top">
+            <div class="pc-lv">${levelBadge(info.level)}</div>
+            <div class="pc-main">
+              <div class="pc-name">${esc(profile.name)} <button class="icon-btn" data-do="editName" aria-label="Namen ändern">✏️</button></div>
+              <div class="pc-title">${esc(info.title)}</div>
+              ${xpBar(info)}
+            </div>
           </div>
-          ${room ? '<button class="link" data-do="create">… oder lieber einen eigenen Tisch eröffnen</button>' : ''}
+          <div class="pc-stats"><span><b>${profile.games}</b> Spiele</span><span><b>${profile.wins}</b> Siege</span></div>
         </div>
-        <div class="home-foot">
-          <span>2–6 Personen</span><span>ab 8</span><span>ca. 20 Min.</span>
+        ${room ? `
+          <div class="invite">
+            <p>Du wurdest an Tisch <b>${esc(room)}</b> eingeladen!</p>
+            <button class="btn primary big" data-do="joinInvite">An den Tisch setzen</button>
+          </div>` : ''}
+        ${!profile.tutorialDone ? `
+          <div class="panel chef-panel tut-card">
+            <img class="chef-peek" src="img/chef-point.png" alt="">
+            <h3>Neu hier?</h3>
+            <p>Spiel eine Übungsrunde mit <b>Koch Kalle</b> – er erklärt dir alles Schritt für Schritt.</p>
+            <button class="btn primary" data-do="tutorial">🎓 Übungsrunde starten</button>
+            <button class="link" data-do="skipTutorial">Kenne ich schon</button>
+          </div>` : ''}
+        <div class="menu-buttons">
+          <button class="mbtn quick" data-do="quick">
+            <span class="mb-ico">⚡</span><span class="mb-txt"><b>Schnelles Spiel</b><small>Gegner auf deinem Level</small></span>
+          </button>
+          <button class="mbtn friends" data-do="friends">
+            <span class="mb-ico">👥</span><span class="mb-txt"><b>Mit Freunden</b><small>Eigenen Tisch eröffnen oder beitreten</small></span>
+          </button>
         </div>
-        <button class="link" data-do="rules">📖 Spielregeln</button>
-        <a class="link small" href="${esc((SERVER ? CONFIG.publicUrl : '') + '/datenschutz.html')}" target="_blank" rel="noopener">Datenschutz</a>
+        <div class="home-links">
+          <button class="link" data-do="rules">📖 Regeln</button>
+          ${profile.tutorialDone ? '<button class="link" data-do="tutorial">🎓 Tutorial</button>' : ''}
+          <button class="link" data-do="levels">🏅 Level</button>
+        </div>
+        <a class="link small" href="${esc(privacyUrl())}" target="_blank" rel="noopener">Datenschutz</a>
       </div>`;
+  }
+
+  function renderMatching() {
+    const st = mm.status || {};
+    const lv = E.levelInfo(profile.xp).level;
+    const secs = Math.floor((st.waited || 0) / 1000);
+    app.innerHTML = `
+      <div class="home matching">
+        <img class="chef-big bob" src="img/chef-wave.png" alt="">
+        <h2>Suche Gegner …</h2>
+        <p class="mm-range">Level ${Math.max(1, lv - (st.range || 2))} – ${lv + (st.range || 2)}</p>
+        <div class="mm-dots"><i></i><i></i><i></i></div>
+        <p class="note">${st.near > 1 ? `${st.near - 1} Spieler:in${st.near > 2 ? 'nen' : ''} in deiner Nähe gefunden` : 'Noch niemand auf deinem Level online'} · ${secs}s</p>
+        ${st.botsIn > 0 ? `<p class="note">Falls niemand kommt, spielen in ${st.botsIn}s Bots mit dir.</p>` : ''}
+        <button class="btn big" data-do="cancelQuick">Abbrechen</button>
+      </div>`;
+  }
+
+  function friendsSheet() {
+    openSheet(`<h2>👥 Mit Freunden spielen</h2>
+      <p class="note">Eröffne einen Tisch und schick den Code an deine Freunde.</p>
+      <button class="btn primary big" data-do="create">Neuen Tisch eröffnen</button>
+      <div class="or">oder mit Code beitreten</div>
+      <div class="join-row">
+        <input id="code" maxlength="4" placeholder="CODE" value="${esc(roomParam())}" autocapitalize="characters">
+        <button class="btn" data-do="join">Beitreten</button>
+      </div>`);
+  }
+
+  function nameSheet() {
+    openSheet(`<h2>✏️ Name ändern</h2>
+      <input id="newName" maxlength="18" value="${esc(profile.name)}">
+      <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-do="saveName">Speichern</button></div>`);
+  }
+
+  function levelsSheet() {
+    const info = E.levelInfo(profile.xp);
+    openSheet(`<h2>🏅 Level & Titel</h2>
+      <p>Für jede Runde bekommst du XP: <b>20</b> fürs Mitspielen, <b>15</b> pro fertigem Burger und <b>40+</b> für den Sieg.
+      Beim Schnellen Spiel triffst du Gegner auf deinem Level.</p>
+      <ul class="titles">${E.TITLES.map(([l, t]) => `<li class="${info.level >= l ? 'got' : ''}">${levelBadge(l)} ${esc(t)}</li>`).join('')}</ul>`);
   }
 
   function renderLobby() {
@@ -227,7 +447,7 @@
     const n = view.players.length;
     app.innerHTML = `
       <div class="lobby">
-        <div class="logo small"><span>SMASH</span><span>BURGER</span></div>
+        <img class="logo-img small" src="img/logo.png" alt="Smash Burger">
         <div class="panel">
           <div class="code-box">
             <div class="code-label">Tisch-Code</div>
@@ -239,6 +459,7 @@
             ${view.players.map((p, i) => `
               <li>
                 <span class="dot ${p.connected ? 'on' : ''}"></span>
+                ${levelBadge(p.level || 1)}
                 <span class="pname">${esc(p.name)}${i === me() ? ' <small>(du)</small>' : ''}</span>
                 ${i === view.host ? '<span class="badge">👑 Gastgeber</span>' : ''}
                 ${p.isBot ? '<span class="badge">🤖</span>' : ''}
@@ -372,7 +593,7 @@
           ${others.map(({ p, i }) => `
             <div class="opp ${g.current === i ? 'active' : ''} ${view.players[i] && !view.players[i].connected ? 'offline' : ''}">
               <div class="opp-head">
-                <span class="oname">${g.current === i ? '🍳 ' : ''}${esc(p.name)}</span>
+                <span class="oname">${levelBadge((view.players[i] || {}).level || 1)} ${g.current === i ? '🍳 ' : ''}${esc(p.name)}</span>
                 <span class="ometa"><span class="hc">${'<i></i>'.repeat(p.handCount)}</span> ✓${E.completedCount(p.tray, R)}/${R.length}</span>
               </div>
               ${trayHTML(p, i, 20, tg)}
@@ -392,18 +613,120 @@
 
         <section class="hand">${myHand().map(handCard).join('') || '<div class="empty-hand">Keine Karten auf der Hand</div>'}</section>
 
-        ${g.winner != null ? `
-          <div class="winner">
-            <div class="winner-card">
-              <div class="big-emoji">🍔</div>
-              <h2>${g.winner === me() ? 'Du gewinnst!' : `${esc(g.players[g.winner].name)} gewinnt!`}</h2>
-              <p>${g.winner === me() ? 'Alle Burger fertig – du bist Küchenchef:in!' : 'Ab in die Küche, nächste Runde!'}</p>
-              ${view.host === me() ? '<button class="btn primary big" data-do="restart">Nochmal spielen</button>' : '<p class="wait">Warte auf den Gastgeber …</p>'}
-              <button class="link" data-do="leave">Tisch verlassen</button>
-            </div>
-          </div>` : ''}
+        ${g.winner != null ? resultHTML(g) : ''}
       </div>`;
+    animateResult();
     if (g.log.length) lastLogN = Math.max(lastLogN, g.log[g.log.length - 1].n);
+  }
+
+  function resultHTML(g) {
+    const won = g.winner === me();
+    const r = view.result;
+    const levelUp = r && r.after.level > r.before.level;
+    let buttons;
+    if (view.kind === 'tutorial') {
+      buttons = '<button class="btn primary big" data-do="home">Zum Hauptmenü</button>';
+    } else if (view.kind === 'quick') {
+      buttons = `<button class="btn primary big" data-do="again">⚡ Nächstes Spiel</button>
+        <button class="link" data-do="home">Hauptmenü</button>`;
+    } else {
+      buttons = `${view.host === me() ? '<button class="btn primary big" data-do="restart">Nochmal spielen</button>' : '<p class="wait">Warte auf den Gastgeber …</p>'}
+        <button class="link" data-do="home">Hauptmenü</button>`;
+    }
+    return `
+      <div class="winner">
+        <div class="winner-card">
+          <img class="chef-result" src="img/${won ? 'chef-cheer' : 'chef-thumbs'}.png" alt="">
+          <h2>${won ? 'Du gewinnst!' : `${esc(g.players[g.winner].name)} gewinnt!`}</h2>
+          <p>${view.kind === 'tutorial' ? 'Übungsrunde geschafft – jetzt bist du bereit für echte Gegner!'
+            : won ? 'Alle Burger fertig – du bist Küchenchef:in!' : 'Ab in die Küche, nächste Runde!'}</p>
+          ${r ? `
+            <div class="xp-gain">
+              <div class="xp-plus">+${r.xp} XP</div>
+              <div class="xp-detail">20 fürs Mitspielen · ${r.burgers} × 15 für Burger${r.won ? ' · Sieg-Bonus' : ''}${r.bonus ? ` · ${r.bonus} Tutorial-Bonus` : ''}</div>
+              <div class="xp-row">${levelBadge(r.after.level)}
+                <div class="xpbar big"><i data-from="${levelUp ? 0 : Math.round(r.before.into / r.before.need * 100)}" data-to="${Math.round(r.after.into / r.after.need * 100)}"></i><span>${r.after.into} / ${r.after.need} XP</span></div>
+              </div>
+              ${levelUp ? `<div class="level-up">⭐ Level ${r.after.level} erreicht! <small>${esc(r.after.title)}</small></div>` : ''}
+            </div>` : ''}
+          ${buttons}
+        </div>
+      </div>`;
+  }
+
+  // Fill the XP bar from the old to the new value once the result appears.
+  let animatedFor = null;
+  function animateResult() {
+    const bar = app.querySelector('.xp-gain .xpbar i');
+    if (!bar) return;
+    const key = `${view.code}:${view.game.turn}`;
+    if (animatedFor === key) { bar.style.width = bar.dataset.to + '%'; return; }
+    animatedFor = key;
+    bar.style.transition = 'none';
+    bar.style.width = bar.dataset.from + '%';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      bar.style.transition = '';
+      bar.style.width = bar.dataset.to + '%';
+    }));
+  }
+
+  // ---------- Tutorial (Koch Kalle erklärt) ----------
+
+  const coachEl = document.getElementById('coach');
+  let tutStep = null;
+
+  const tutTray = () => game().players[me()].tray;
+  const tutLayers = () => Math.max(0, ...tutTray().map(st => E.layersOf(st).length));
+  const handHas = kind => myHand().some(c => T[c.t].kind === kind);
+  const selType = () => { const c = ui.sel && findCard(ui.sel); return c && c.t; };
+
+  // Each step: text, optional highlight target, `when` (show only then), `done` (auto-advance) or `next` (button).
+  const TUT = [
+    { chef: 'wave', next: true, text: 'Willkommen in meiner Küche! Ich bin <b>Kalle</b>. Wer zuerst alle Burger seiner Bestellung fertig hat, gewinnt. Ich zeig dir, wie das geht!' },
+    { chef: 'point', target: '.menu-strip', next: true, text: 'Das ist <b>deine Bestellung</b>. Jeder Burger wird <b>von links nach rechts</b> gebaut – das Brötchen kommt immer zum Schluss.' },
+    { chef: 'point', target: '.hand', when: () => myTurn(), done: () => selType() === 'beef' || tutTray().length > 0, text: 'Unten liegen deine <b>3 Handkarten</b>. Tippe auf das <b>Beef-Patty</b>.' },
+    { chef: 'point', target: '.mytray .stack.target', when: () => myTurn(), done: () => tutTray().length > 0, text: 'Leuchtende Felder zeigen, wo die Karte hinpasst. Tippe auf <b>„Neuer Burger“</b>.' },
+    { chef: 'point', target: '.hand', when: () => myTurn(), done: () => tutLayers() >= 2 || !myTurn(), text: 'Super! Pro Zug darfst du <b>bis zu 3 Karten</b> spielen. Leg jetzt den <b>Käse</b> auf dein Patty.' },
+    { chef: 'point', target: '.hand', when: () => myTurn(), done: () => !myTurn(), text: '<b>Salat</b> beginnt einen anderen Burger (Chicken oder Classic). Leg ihn als neuen Burger – das ist deine 3. Karte.' },
+    { chef: 'thumbs', target: '.opponents', next: true, text: 'Nach 3 Karten endet dein Zug und du <b>ziehst automatisch auf 3 Karten nach</b>. Dann bin ich dran – oben siehst du mein Tablett und darunter, was gerade passiert ist.' },
+    { chef: 'point', target: '.hand', when: () => myTurn(), done: () => E.completedCount(tutTray(), game().recipes) >= 1 || game().turn > 6, text: 'Du hast ein <b>Brötchen</b> gezogen! Damit wird dein Cheeseburger fertig. Leg es auf den Stapel mit Patty und Käse.' },
+    { chef: 'cheer', target: '.menu-strip', next: true, text: 'Dein erster Burger! ✅ In der Bestellung wird alles <b>abgehakt</b>, was schon auf deinem Tablett liegt.' },
+    { chef: 'point', target: '.hand .card.act', when: () => myTurn() && handHas('act'), skip: () => game().turn > 12, next: true, text: 'Das ist eine <b>Aktionskarte</b>! ✋ <b>Klauen</b> schnappt dir die oberste Zutat von einem Tablett, 🔥 <b>Anbrennen</b> wirft einen Burger in den Müll. Tippe sie an und dann auf <b>„Ausspielen“</b>.' },
+    { chef: 'point', target: '.hint', when: () => myTurn() && game().played >= 1, next: true, text: 'Passt keine Karte mehr? Wirf unnütze Karten ab oder tippe auf <b>„Zug beenden“</b>. Aber: Aussetzen gilt nicht – mindestens 1 Karte pro Zug!' },
+    { chef: 'thumbs', next: true, text: 'Jetzt kennst du alles Wichtige. Den Rest lernst du beim Spielen – schlag mich, wenn du kannst! 😄' },
+  ];
+
+  function hideCoach() {
+    coachEl.classList.add('hidden');
+    coachEl.innerHTML = '';
+  }
+
+  function renderCoach() {
+    document.querySelectorAll('.coach-hl').forEach(el => el.classList.remove('coach-hl'));
+    const g = game();
+    if (!view || view.kind !== 'tutorial' || !g || g.winner != null) return hideCoach();
+    if (tutStep == null) tutStep = Number(sessionStorage.getItem(LS_TUT + view.code)) || 0;
+    // Auto-advance through steps whose goal is already reached.
+    const passed = s => (s.done && s.done()) || (s.skip && s.skip());
+    while (tutStep < TUT.length && passed(TUT[tutStep])) tutStep++;
+    sessionStorage.setItem(LS_TUT + view.code, tutStep);
+    const step = TUT[tutStep];
+    if (!step || (step.when && !step.when()) || sheetKind) return hideCoach();
+    let target = step.target && app.querySelector(step.target);
+    if (target) target.classList.add('coach-hl');
+    // Keep the bubble away from what it points at; without a target it sits in the middle.
+    const pos = !target ? 'mid' : target.getBoundingClientRect().top > window.innerHeight * 0.5 ? 'top' : 'bottom';
+    coachEl.className = `coach ${pos}`;
+    coachEl.innerHTML = `
+      <img src="img/chef-${step.chef || 'point'}.png" alt="Koch Kalle">
+      <div class="coach-bubble">
+        <div class="coach-text">${step.text}</div>
+        <div class="coach-foot">
+          <span class="coach-count">${tutStep + 1}/${TUT.length}</span>
+          ${step.next ? '<button class="btn primary small" data-do="coachNext">Weiter</button>' : ''}
+          <button class="link small-link" data-do="coachSkip">Tutorial beenden</button>
+        </div>
+      </div>`;
   }
 
   // ---------- Sheets ----------
@@ -541,20 +864,28 @@
     }
   }
 
-  async function enter(path) {
-    const name = (document.getElementById('name').value || '').trim();
-    const code = (document.getElementById('code')?.value || '').trim().toUpperCase();
-    if (!name) return toast('Bitte gib deinen Namen ein.');
-    if (path === '/api/join' && code.length !== 4) return toast('Der Code hat 4 Buchstaben.');
-    localStorage.setItem(LS_NAME, name);
+  function joinByCode(code) {
+    code = (code || '').trim().toUpperCase();
+    if (code.length !== 4) return toast('Der Code hat 4 Buchstaben.');
+    joinTable('/api/join', { code });
+  }
+
+  async function saveName() {
+    const name = (document.getElementById('newName').value || '').trim();
+    if (!name) return toast('Bitte gib einen Namen ein.');
     try {
-      const r = await post(path, { name, code });
-      saveSession(r);
-      history.replaceState(null, '', '?room=' + r.code);
-      connect();
+      profile = (await post('/api/profile/update', withProfile({ name }))).profile;
+      localStorage.setItem(LS_NAME, name);
+      closeSheet();
+      render();
     } catch (e) {
-      toast(e.message);
+      if (!handleMissing(e)) toast(e.message);
     }
+  }
+
+  function markTutorialDone() {
+    if (profile) profile.tutorialDone = true;
+    post('/api/profile/update', withProfile({ tutorialDone: true })).catch(() => {});
   }
 
   // ---------- Eingaben ----------
@@ -660,8 +991,32 @@
     if (!el) return;
     const d = el.dataset;
     switch (d.do) {
-      case 'create': return enter('/api/create');
-      case 'join': return enter('/api/join');
+      case 'onboard': return createProfile();
+      case 'create': return joinTable('/api/create');
+      case 'join': return joinByCode(document.getElementById('code')?.value);
+      case 'joinInvite': return joinByCode(roomParam());
+      case 'friends': return friendsSheet();
+      case 'quick': return startQuick();
+      case 'cancelQuick': return cancelQuick();
+      case 'tutorial':
+        tutStep = null;
+        return joinTable('/api/tutorial');
+      case 'skipTutorial':
+        markTutorialDone();
+        return render();
+      case 'coachNext':
+        tutStep++;
+        return render();
+      case 'coachSkip':
+        tutStep = TUT.length;
+        return render();
+      case 'editName': return nameSheet();
+      case 'saveName': return saveName();
+      case 'levels': return levelsSheet();
+      case 'home': return leaveTable();
+      case 'again':
+        await leaveTable();
+        return startQuick();
       case 'rules': return rulesSheet();
       case 'menu': return menuSheet();
       case 'trash': return trashSheet();
@@ -678,14 +1033,7 @@
       case 'kick': return send({ type: 'kick', target: Number(d.i) });
       case 'leave':
         if (!confirm(game() && game().winner == null ? 'Tisch verlassen? Ein Bot spielt für dich weiter.' : 'Tisch verlassen?')) return;
-        await send({ type: 'leave' });
-        if (es) es.close();
-        es = null;
-        saveSession(null);
-        view = null;
-        closeSheet();
-        history.replaceState(null, '', '/');
-        return render();
+        return leaveTable();
       case 'card': return onCard(Number(d.id));
       case 'stack': return onStack(Number(d.p), d.s);
       case 'cancel':
@@ -718,9 +1066,15 @@
 
   app.addEventListener('click', click);
   sheet.addEventListener('click', click);
-  app.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && e.target.id === 'code') enter('/api/join');
-  });
+  coachEl.addEventListener('click', click);
+  const onEnter = e => {
+    if (e.key !== 'Enter') return;
+    if (e.target.id === 'code') joinByCode(e.target.value);
+    if (e.target.id === 'name') createProfile();
+    if (e.target.id === 'newName') saveName();
+  };
+  app.addEventListener('keydown', onEnter);
+  sheet.addEventListener('keydown', onEnter);
 
   // Android back button (in the app): close sheets / cancel the move first, only then leave the app.
   const capApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
@@ -742,6 +1096,7 @@
   }
 
   wakeServer();
+  loadProfile();
   if (session) connect();
   render();
 })();
