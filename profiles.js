@@ -22,7 +22,10 @@ async function sb(method, query, body) {
   const r = await fetch(`${SB_URL}/rest/v1/profiles${query}`, {
     method,
     headers: {
-      apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, 'Content-Type': 'application/json',
+      apikey: SB_KEY,
+      // Legacy service_role keys are JWTs and go in Authorization too; new sb_secret_ keys only in apikey.
+      ...(SB_KEY.startsWith('eyJ') ? { Authorization: `Bearer ${SB_KEY}` } : {}),
+      'Content-Type': 'application/json',
       Prefer: 'return=representation',
     },
     body: body ? JSON.stringify(body) : undefined,
