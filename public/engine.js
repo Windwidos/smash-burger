@@ -12,6 +12,12 @@
   const LAYERS = {
     bun: 'Brötchen', tomato: 'Tomate', salad: 'Salat',
     cheese: 'Käse', beef: 'Beef-Patty', chicken: 'Chicken-Patty',
+    // Themen-Packs
+    jalapeno: 'Jalapeños', guacamole: 'Guacamole', nachos: 'Nachos',
+    pineapple: 'Ananas', ham: 'Schinken',
+    bacon: 'Bacon', bbq: 'BBQ-Soße', onionrings: 'Zwiebelringe',
+    pumpkin: 'Kürbis', monstersauce: 'Monster-Soße',
+    camembert: 'Camembert', cranberry: 'Preiselbeeren', roestzwiebeln: 'Röstzwiebeln',
   };
 
   // Ingredient layers are listed bottom → top, i.e. in the order they are laid on the tray.
@@ -31,14 +37,59 @@
     steal: { kind: 'act', name: 'Klauen', count: 3, desc: 'Klaue einen fertigen Burger oder die oberste Zutat und lege sie auf ein anderes Tablett.' },
     dig:   { kind: 'act', name: 'Mülltaucher', count: 3, desc: 'Nimm dir eine Zutat aus dem Müll und verwende sie sofort.' },
     swap:  { kind: 'act', name: 'Falscher Tisch', count: 2, desc: 'Alle Tabletts wandern gleichzeitig eine Person weiter.' },
+    // Themen-Packs: these cards are only shuffled in when a table plays that theme.
+    jalapeno:      { kind: 'ing', layers: ['jalapeno'], name: 'Jalapeños', count: 5, theme: 'mexico' },
+    guacamole:     { kind: 'ing', layers: ['guacamole'], name: 'Guacamole', count: 5, theme: 'mexico' },
+    nachos:        { kind: 'ing', layers: ['nachos'], name: 'Nachos', count: 5, theme: 'mexico' },
+    pineapple:     { kind: 'ing', layers: ['pineapple'], name: 'Ananas', count: 6, theme: 'hawaii' },
+    ham:           { kind: 'ing', layers: ['ham'], name: 'Schinken', count: 5, theme: 'hawaii' },
+    bacon:         { kind: 'ing', layers: ['bacon'], name: 'Bacon', count: 5, theme: 'western' },
+    bbq:           { kind: 'ing', layers: ['bbq'], name: 'BBQ-Soße', count: 6, theme: 'western' },
+    onionrings:    { kind: 'ing', layers: ['onionrings'], name: 'Zwiebelringe', count: 5, theme: 'western' },
+    pumpkin:       { kind: 'ing', layers: ['pumpkin'], name: 'Kürbis', count: 5, theme: 'halloween' },
+    monstersauce:  { kind: 'ing', layers: ['monstersauce'], name: 'Monster-Soße', count: 5, theme: 'halloween' },
+    camembert:     { kind: 'ing', layers: ['camembert'], name: 'Camembert', count: 6, theme: 'winter' },
+    cranberry:     { kind: 'ing', layers: ['cranberry'], name: 'Preiselbeeren', count: 5, theme: 'winter' },
+    roestzwiebeln: { kind: 'ing', layers: ['roestzwiebeln'], name: 'Röstzwiebeln', count: 5, theme: 'winter' },
   };
 
+  // Indices 0–3 are the classic menu; themed specials follow. Clients and server share these indices.
   const RECIPES = [
     { id: 'cheese',  name: 'Cheeseburger',   layers: ['beef', 'cheese', 'bun'] },
     { id: 'chicken', name: 'Chicken Burger', layers: ['salad', 'tomato', 'chicken', 'bun'] },
     { id: 'deluxe',  name: 'Deluxe Burger',  layers: ['beef', 'cheese', 'salad', 'tomato', 'bun'] },
     { id: 'classic', name: 'Classic Burger', layers: ['salad', 'tomato', 'beef', 'bun'] },
+    { id: 'diablo',      name: 'El Diablo',        theme: 'mexico',    layers: ['beef', 'cheese', 'jalapeno', 'bun'] },
+    { id: 'guaca',       name: 'Guaca-Chicken',    theme: 'mexico',    layers: ['chicken', 'guacamole', 'nachos', 'bun'] },
+    { id: 'hawaii',      name: 'Hawaii Classic',   theme: 'hawaii',    layers: ['beef', 'cheese', 'pineapple', 'bun'] },
+    { id: 'aloha',       name: 'Aloha Chicken',    theme: 'hawaii',    layers: ['chicken', 'ham', 'pineapple', 'bun'] },
+    { id: 'cowboy',      name: 'Cowboy',           theme: 'western',   layers: ['beef', 'bacon', 'bbq', 'bun'] },
+    { id: 'rodeo',       name: 'Rodeo',            theme: 'western',   layers: ['beef', 'cheese', 'onionrings', 'bbq', 'bun'] },
+    { id: 'pumpkin',     name: 'Kürbis-Kracher',   theme: 'halloween', layers: ['chicken', 'pumpkin', 'salad', 'bun'] },
+    { id: 'monster',     name: 'Monster-Burger',   theme: 'halloween', layers: ['beef', 'monstersauce', 'cheese', 'bun'] },
+    { id: 'huette',      name: 'Hüttenzauber',     theme: 'winter',    layers: ['chicken', 'camembert', 'cranberry', 'bun'] },
+    { id: 'holzfaeller', name: 'Holzfäller',       theme: 'winter',    layers: ['beef', 'roestzwiebeln', 'camembert', 'bun'] },
   ];
+
+  // extra: additional base cards so the specials stay buildable (e.g. only 2 chicken patties in the base game).
+  const THEMES = {
+    mexico:    { name: 'Fiesta Mexicana', icon: '🌮', extra: { chicken: 2 } },
+    hawaii:    { name: 'Aloha Hawaii',    icon: '🌺', extra: { chicken: 2 } },
+    western:   { name: 'Wilder Westen',   icon: '🤠', extra: { beef: 2 } },
+    halloween: { name: 'Gruselküche',     icon: '🎃', extra: { chicken: 2 } },
+    winter:    { name: 'Winterzauber',    icon: '❄️', extra: { chicken: 2 } },
+  };
+
+  const themeRecipes = theme => RECIPES.map((r, i) => (r.theme === theme ? i : -1)).filter(i => i >= 0);
+
+  // Classic tables always play the same menu. Themed tables: both specials plus randomly drawn classics,
+  // so every round has a different menu.
+  function pickRecipes(n, theme, rng) {
+    const size = n <= 3 ? 4 : 3;
+    if (!theme || !THEMES[theme]) return n <= 3 ? [0, 1, 2, 3] : [0, 1, 2];
+    const classics = shuffle([0, 1, 2, 3], rng).slice(0, size - 2).sort((a, b) => a - b);
+    return classics.concat(themeRecipes(theme));
+  }
 
   // ---------- Burger-Regeln ----------
 
@@ -134,10 +185,14 @@
 
   // ---------- Spielablauf ----------
 
-  function makeDeck() {
+  function makeDeck(theme) {
     const d = [];
     let id = 1;
-    for (const [t, def] of Object.entries(TYPES)) for (let i = 0; i < def.count; i++) d.push({ id: id++, t });
+    const extra = (THEMES[theme] && THEMES[theme].extra) || {};
+    for (const [t, def] of Object.entries(TYPES)) {
+      if (def.theme && def.theme !== theme) continue;
+      for (let i = 0; i < def.count + (extra[t] || 0); i++) d.push({ id: id++, t });
+    }
     return d;
   }
 
@@ -178,10 +233,12 @@
     rng = rng || Math.random;
     opts = opts || {};
     const n = names.length;
+    const theme = THEMES[opts.theme] ? opts.theme : null;
     const s = {
-      recipes: n <= 3 ? [0, 1, 2, 3] : [0, 1, 2],
+      theme,
+      recipes: pickRecipes(n, theme, rng),
       players: names.map(name => ({ name, hand: [], tray: [] })),
-      deck: shuffle(makeDeck(), rng),
+      deck: shuffle(makeDeck(theme), rng),
       trash: [],
       current: startIdx == null ? Math.floor(rng() * n) : startIdx,
       played: 0,
@@ -437,6 +494,7 @@
 
   function viewFor(s, p) {
     return {
+      theme: s.theme || null,
       recipes: s.recipes,
       players: s.players.map((pl, i) => ({
         name: pl.name,
@@ -559,7 +617,7 @@
   }
 
   return {
-    MAX_PLAYS, HAND_SIZE, LAYERS, TYPES, RECIPES,
+    MAX_PLAYS, HAND_SIZE, LAYERS, TYPES, RECIPES, THEMES, themeRecipes, pickRecipes,
     layersOf, candidates, completeRecipe, trayValid, assignRecipes, withAdded, placeTargets, trayDone, completedCount,
     makeDeck, newGame, act, viewFor, botStep, digOptions,
     TITLES, xpToNext, levelInfo, gameXp,

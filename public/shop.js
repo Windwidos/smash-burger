@@ -43,7 +43,19 @@
     { id: 'muenzen_1000', coins: 1000, label: '1.000 Münzen', price: '2,99 €', tag: 'Beliebt' },
     { id: 'muenzen_2500', coins: 2500, label: '2.500 Münzen', price: '5,99 €', tag: 'Bester Wert' },
     { id: 'unterstuetzer', coins: 500, supporter: true, label: 'Unterstützer:in', price: '2,99 €' },
+    // Themen-Packs (einmaliger Kauf): eigener Hintergrund, neue Zutaten, 2 Spezial-Burger, wechselnde Speisekarte.
+    { id: 'pack_mexiko', theme: 'mexico', coins: 0, label: 'Fiesta Mexicana', price: '0,99 €' },
+    { id: 'pack_hawaii', theme: 'hawaii', coins: 0, label: 'Aloha Hawaii', price: '0,99 €' },
+    { id: 'pack_westen', theme: 'western', coins: 0, label: 'Wilder Westen', price: '0,99 €' },
+    { id: 'pack_grusel', theme: 'halloween', coins: 0, label: 'Gruselküche', price: '0,99 €' },
+    { id: 'pack_winter', theme: 'winter', coins: 0, label: 'Winterzauber', price: '0,99 €' },
   ];
+
+  const themeItem = theme => 'theme:' + theme;
+  function ownsTheme(profile, theme) {
+    return !!profile && (profile.owned || []).includes(themeItem(theme));
+  }
+  const themePacks = () => IAP.filter(p => p.theme);
 
   // Münzen pro Spiel und durch freiwillige Werbung.
   function gameCoins(won, burgers) {
@@ -80,5 +92,8 @@
     return EMOTES.filter(e => ownsPack(profile, e.pack));
   }
 
-  return { TRAYS, EMOTES, PACKS, IAP, AD_COINS, ADS_PER_DAY, gameCoins, itemId, trayById, packById, iapById, ownsTray, ownsPack, ownedEmotes };
+  return {
+    TRAYS, EMOTES, PACKS, IAP, AD_COINS, ADS_PER_DAY, gameCoins, itemId, trayById, packById, iapById,
+    ownsTray, ownsPack, ownedEmotes, themeItem, ownsTheme, themePacks,
+  };
 });

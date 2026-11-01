@@ -68,6 +68,11 @@ Los geht's – ab in die Küche!
 | muenzen_1000 | 1.000 Münzen | 2,99 € |
 | muenzen_2500 | 2.500 Münzen | 5,99 € |
 | unterstuetzer | Unterstützer:in | 2,99 € |
+| pack_mexiko | Themen-Pack Fiesta Mexicana | 0,99 € |
+| pack_hawaii | Themen-Pack Aloha Hawaii | 0,99 € |
+| pack_westen | Themen-Pack Wilder Westen | 0,99 € |
+| pack_grusel | Themen-Pack Gruselküche | 0,99 € |
+| pack_winter | Themen-Pack Winterzauber | 0,99 € |
 
 **AdMob:** App „Smash Burger“ ca-app-pub-2648510730204337~8346592908, Anzeigenblock „Belohnung“ ca-app-pub-2648510730204337/7019575506.
 

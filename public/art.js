@@ -32,7 +32,9 @@ window.Art = (function () {
   const ACTIONS = { burn: '🔥', steal: '✋', dig: '🗑️', swap: '🔄' };
 
   // Painted illustrations (Figma AI, see art-src/); the SVGs above stay as fallback.
-  const PAINTED = new Set(['bun', 'tomato', 'salad', 'cheese', 'beef', 'chicken', 'burn', 'steal', 'dig', 'swap']);
+  const PAINTED = new Set(['bun', 'tomato', 'salad', 'cheese', 'beef', 'chicken', 'burn', 'steal', 'dig', 'swap',
+    'jalapeno', 'guacamole', 'nachos', 'pineapple', 'ham', 'bacon', 'bbq', 'onionrings', 'pumpkin', 'monstersauce',
+    'camembert', 'cranberry', 'roestzwiebeln']);
 
   function img(name, size, label) {
     return `<img class="ico" src="img/${name}.png" width="${size}" height="${size}" alt="${label}" draggable="false">`;

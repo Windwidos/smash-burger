@@ -87,6 +87,7 @@ function roomView(room, idx) {
   return {
     code: room.code,
     kind: room.kind,
+    theme: st ? st.theme : room.theme || null,
     version: room.version || 0,
     phase: st ? 'game' : 'lobby',
     you: idx,
@@ -343,7 +344,15 @@ function handleLobbyAction(room, idx, a) {
       if (!isHost) return 'Nur der Gastgeber kann starten.';
       if (room.state) return 'Das Spiel läuft schon.';
       if (room.players.length < 2) return 'Ihr braucht mindestens 2 Leute (oder einen Bot).';
-      startGame(room);
+      startGame(room, { theme: room.theme });
+      return null;
+    }
+    case 'setTheme': {
+      // Only the host picks, and only a theme pack they bought. Everyone at the table plays it.
+      if (!isHost) return 'Nur der Gastgeber wählt das Thema.';
+      if (room.state) return 'Das Spiel läuft schon.';
+      if (a.theme && !(E.THEMES[a.theme] && Shop.ownsTheme(room.players[idx].profile, a.theme))) return 'Dieses Themen-Pack hast du noch nicht.';
+      room.theme = a.theme || null;
       return null;
     }
     case 'restart': {
@@ -469,13 +478,16 @@ async function handleApi(req, res, url) {
       const token = String(body.purchaseToken || '');
       if (!product || token.length < 10 || token.length > 4000) return json(res, 400, { error: 'Ungültiger Kauf.' });
       const fresh = await Profiles.claimPurchase(token, prof.id, product.id);
+      const theme = product.theme && Shop.themeItem(product.theme);
       if (fresh) {
         prof.coins += product.coins;
         if (product.supporter) prof.supporter = true;
+        if (theme && !prof.owned.includes(theme)) prof.owned = prof.owned.concat(theme);
         await Profiles.save(prof);
-      } else if (product.supporter && !prof.supporter) {
-        // Restored on a new profile (e.g. app reinstalled): the status comes back, the coins only came once.
-        prof.supporter = true;
+      } else if ((product.supporter && !prof.supporter) || (theme && !prof.owned.includes(theme))) {
+        // Restored on a new profile (e.g. app reinstalled): unlocks come back, the coins only came once.
+        if (product.supporter) prof.supporter = true;
+        if (theme && !prof.owned.includes(theme)) prof.owned = prof.owned.concat(theme);
         await Profiles.save(prof);
       }
       return json(res, 200, { profile: Profiles.publicView(prof), granted: fresh });

@@ -44,6 +44,35 @@ for (let seed = 1; seed <= 600; seed++) {
   else wins[players] = (wins[players] || 0) + 1;
 }
 
+// Themen-Packs: jedes Thema mit 2–6 Spieler:innen, wechselnde Speisekarten, alle Partien enden
+const themeWins = {};
+for (const theme of Object.keys(E.THEMES)) {
+  const menus = new Set();
+  for (let seed = 1; seed <= 80; seed++) {
+    const players = 2 + (seed % 5);
+    const rng = rngFrom(seed * 7 + theme.length);
+    const s = E.newGame(Array.from({ length: players }, (_, i) => `Bot${i}`), 0, rng, { theme });
+    const total = s.deck.length + s.players.reduce((a, p) => a + p.hand.length, 0);
+    if (s.theme !== theme) throw new Error(`Thema ${theme} fehlt im Spielstand`);
+    if (!E.themeRecipes(theme).every(r => s.recipes.includes(r))) throw new Error(`${theme}: Spezial-Burger fehlen`);
+    if (s.recipes.length !== (players <= 3 ? 4 : 3)) throw new Error(`${theme}: falsche Anzahl Burger`);
+    menus.add(s.recipes.join());
+    let k = 0;
+    while (s.winner == null && k < 5000) {
+      const r = E.act(s, s.current, E.botStep(s, s.current), rng);
+      if (!r.ok) throw new Error(`${theme} Seed ${seed}: ${r.error}`);
+      if (countCards(s) !== total) throw new Error(`${theme} Seed ${seed}: Kartenzahl`);
+      k++;
+    }
+    if (s.winner == null) throw new Error(`${theme} Seed ${seed}: kein Sieger`);
+    themeWins[theme] = (themeWins[theme] || 0) + 1;
+  }
+  if (menus.size < 3) throw new Error(`${theme}: Speisekarte wechselt nicht`);
+}
+const classic = E.newGame(['a', 'b'], 0, rngFrom(3));
+if (classic.theme !== null || classic.recipes.join() !== '0,1,2,3' || classic.deck.some(c => E.TYPES[c.t].theme)) throw new Error('Klassisches Spiel verändert');
+console.log('Themen-Partien:', themeWins);
+
 // Gezielte Regeltests
 const R4 = [0, 1, 2];
 const C = (t, id) => ({ id, t });

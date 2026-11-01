@@ -264,9 +264,12 @@
     const r = await post('/api/iap/grant', withProfile({ product: productId, purchaseToken }));
     profile = r.profile;
     const item = S.iapById(productId);
-    if (item && !item.supporter) await Billing.consumePurchase({ purchaseToken }).catch(e => console.warn('[billing] consume', e));
+    if (item && consumable(item)) await Billing.consumePurchase({ purchaseToken }).catch(e => console.warn('[billing] consume', e));
     return r.granted;
   }
+
+  // Coin packs can be bought again and again; supporter status and theme packs are bought once.
+  const consumable = item => !item.supporter && !item.theme;
 
   async function buyIap(productId) {
     if (!Billing) return toast('Münzen kannst du in der Android-App kaufen.');
@@ -274,11 +277,11 @@
     try {
       const t = await Billing.purchaseProduct({
         productIdentifier: productId, productType: 'inapp', quantity: 1,
-        ...(item.supporter ? {} : { isConsumable: false, autoAcknowledgePurchases: false }),
+        ...(consumable(item) ? { isConsumable: false, autoAcknowledgePurchases: false } : {}),
       });
-      if (t.purchaseState !== '1' || !t.purchaseToken) return toast('Der Kauf wird noch bearbeitet – die Münzen kommen, sobald Google ihn bestätigt.');
+      if (t.purchaseState !== '1' || !t.purchaseToken) return toast('Der Kauf wird noch bearbeitet – er wird freigeschaltet, sobald Google ihn bestätigt.');
       await redeem(productId, t.purchaseToken);
-      celebrate(item.supporter ? '⭐ Danke für deine Unterstützung!' : `+${item.coins} 🪙`);
+      celebrate(item.supporter ? '⭐ Danke für deine Unterstützung!' : item.theme ? `${E.THEMES[item.theme].icon} Freigeschaltet!` : `+${item.coins} 🪙`);
       render();
     } catch (e) {
       if (!/cancel/i.test(String((e && e.message) || e))) toast('Kauf fehlgeschlagen. Bitte später nochmal versuchen.');
@@ -472,6 +475,9 @@
 
   function render() {
     document.body.classList.toggle('in-game', !!game());
+    // Themed tables get the pack's background (lobby and game).
+    const theme = session && view ? (game() ? game().theme : view.theme) : null;
+    if ((document.body.dataset.theme || '') !== (theme || '')) document.body.dataset.theme = theme || '';
     if (session && view) {
       tutAdvance();
       if (view.phase === 'lobby') renderLobby();
@@ -502,7 +508,28 @@
     const eq = (profile.equipped && profile.equipped.tray) || 'classic';
     const adsLeft = S.ADS_PER_DAY - (profile.adsToday || 0);
     let body = '';
-    if (shopTab === 'trays') {
+    if (shopTab === 'themes') {
+      body = `<p class="note center">Jedes Pack bringt einen eigenen Hintergrund, neue Zutaten und 2 Spezial-Burger – und jede Runde eine andere Speisekarte. Wähle es beim Tisch-Eröffnen, alle am Tisch spielen mit.</p>
+        ${S.themePacks().map(p => {
+          const t = E.THEMES[p.theme];
+          const owned = S.ownsTheme(profile, p.theme);
+          const ings = Object.entries(T).filter(([, d]) => d.theme === p.theme);
+          const specials = E.themeRecipes(p.theme).map(i => E.RECIPES[i]);
+          const btn = owned ? '<span class="pill ok">✓ Gekauft</span>'
+            : isNative ? `<button class="btn primary" data-do="buyIap" data-id="${p.id}">${esc(iapPrices[p.id] || p.price)}</button>`
+            : `<span class="pill">${esc(p.price)} · in der App</span>`;
+          return `<div class="theme-card ${owned ? 'owned' : ''}">
+            <div class="tc-banner" style="background-image:url(img/bg-${p.theme}-thumb.webp)"><span>${t.icon}</span><b>${esc(t.name)}</b></div>
+            <div class="tc-body">
+              <div class="tc-label">Neue Zutaten</div>
+              <div class="tc-ings">${ings.map(([type, d]) => `<span>${A.icon(d.layers[0], 30)}<small>${esc(d.name)}</small></span>`).join('')}</div>
+              <div class="tc-label">Spezial-Burger</div>
+              ${specials.map(r => `<div class="tc-recipe"><b>${esc(r.name)}</b><span>${r.layers.map(l => A.icon(l, 20)).join('')}</span></div>`).join('')}
+              <div class="tc-foot">${btn}</div>
+            </div>
+          </div>`;
+        }).join('')}`;
+    } else if (shopTab === 'trays') {
       body = `<div class="shop-grid">${S.TRAYS.map(t => {
         const owned = S.ownsTray(profile, t.id);
         const btn = eq === t.id ? '<span class="pill ok">✓ Benutzt</span>'
@@ -557,6 +584,7 @@
           ${coinChip()}
         </div>
         <div class="tabs">
+          <button class="${shopTab === 'themes' ? 'on' : ''}" data-do="shopTab" data-id="themes">Themen</button>
           <button class="${shopTab === 'trays' ? 'on' : ''}" data-do="shopTab" data-id="trays">Tabletts</button>
           <button class="${shopTab === 'emotes' ? 'on' : ''}" data-do="shopTab" data-id="emotes">Emotes</button>
           <button class="${shopTab === 'coins' ? 'on' : ''}" data-do="shopTab" data-id="coins">Münzen</button>
@@ -642,7 +670,7 @@
             <span class="mb-ico">👥</span><span class="mb-txt"><b>Mit Freunden</b><small>Eigenen Tisch eröffnen oder beitreten</small></span>
           </button>
           <button class="mbtn shopbtn" data-do="openShop">
-            <span class="mb-ico">🛒</span><span class="mb-txt"><b>Shop</b><small>Tabletts, Emotes & Münzen</small></span>
+            <span class="mb-ico">🛒</span><span class="mb-txt"><b>Shop</b><small>Themen-Packs, Tabletts & Emotes</small></span>
           </button>
         </div>
         <div class="home-links">
@@ -737,8 +765,9 @@
               </li>`).join('')}
           </ul>
           <p class="note">${n <= 3
-            ? '2–3 Spieler:innen: Alle <b>4 Burger</b> der Speisekarte fertigstellen.'
-            : '4–6 Spieler:innen: Nur die <b>ersten 3 Burger</b> der Speisekarte fertigstellen.'}</p>
+            ? '2–3 Spieler:innen: <b>4 Burger</b> fertigstellen.'
+            : '4–6 Spieler:innen: <b>3 Burger</b> fertigstellen.'}</p>
+          ${themePickerHTML(isHost)}
           ${isHost ? `
             <div class="btn-row">
               <button class="btn" data-do="addBot" ${n >= 6 ? 'disabled' : ''}>🤖 Bot dazu</button>
@@ -751,6 +780,23 @@
           <button class="link danger" data-do="leave">Tisch verlassen</button>
         </div>
       </div>`;
+  }
+
+  // Host picks the table's theme (own packs only); locked packs lead to the shop.
+  function themePickerHTML(isHost) {
+    const cur = view.theme || null;
+    if (!isHost) {
+      return cur ? `<div class="theme-now">${E.THEMES[cur].icon} Thema: <b>${esc(E.THEMES[cur].name)}</b></div>` : '';
+    }
+    const chips = [{ id: '', icon: '🍔', name: 'Klassisch' }].concat(Object.entries(E.THEMES).map(([id, t]) => ({ id, ...t })));
+    return `<h3>Thema</h3>
+      <div class="theme-chips">${chips.map(t => {
+        const owned = !t.id || S.ownsTheme(profile, t.id);
+        const on = (cur || '') === t.id;
+        return `<button class="theme-chip ${on ? 'on' : ''} ${owned ? '' : 'locked'}" data-do="${owned ? 'setTheme' : 'themeShop'}" data-id="${t.id}"
+          ${t.id ? `style="background-image:url(img/bg-${t.id}-thumb.webp)"` : ''}>
+          <span>${t.icon}</span><b>${esc(t.name)}</b>${owned ? '' : '<i>🔒</i>'}</button>`;
+      }).join('')}</div>`;
   }
 
   function miniCard(c, size) {
@@ -1370,15 +1416,18 @@
 
   function menuSheet() {
     const g = game();
-    const R = g ? g.recipes : (view && view.players.length <= 3 ? [0, 1, 2, 3] : [0, 1, 2]);
+    const theme = g ? g.theme : view && view.theme;
+    // In a game: exactly this round's menu. Before: the classic menu, or the specials of the chosen theme.
+    const R = g ? g.recipes : theme ? E.themeRecipes(theme) : [0, 1, 2, 3];
     const tray = g ? g.players[me()].tray : [];
-    openSheet(`<h2>Smash Menu</h2>
-      <p class="note">Von links nach rechts legen – das Brötchen kommt zum Schluss.</p>
-      <div class="menu-list">${E.RECIPES.map((r, i) => {
-        const active = R.includes(i);
+    openSheet(`<h2>${theme ? `${E.THEMES[theme].icon} ${esc(E.THEMES[theme].name)}` : 'Smash Menu'}</h2>
+      <p class="note">${!g && theme ? 'Die Spezial-Burger dieses Themas – dazu kommen in jeder Runde zufällig ausgewählte Klassiker.'
+        : 'Von links nach rechts legen – das Brötchen kommt zum Schluss.'}</p>
+      <div class="menu-list">${R.map((i, k) => {
+        const r = E.RECIPES[i];
         const done = tray.some(st => E.completeRecipe(st, [i]) === i);
-        return `<div class="menu-item ${active ? '' : 'inactive'} ${done ? 'done' : ''}">
-          <div class="menu-name">${done ? '✅ ' : ''}${i + 1}. ${esc(r.name)}${i === 3 ? ' <small>(nur 2–3 Spieler:innen)</small>' : ''}</div>
+        return `<div class="menu-item ${done ? 'done' : ''} ${r.theme ? 'special' : ''}">
+          <div class="menu-name">${done ? '✅ ' : ''}${k + 1}. ${esc(r.name)}${r.theme ? ' <span class="pill">Spezial</span>' : ''}${!g && !theme && i === 3 ? ' <small>(nur 2–3 Spieler:innen)</small>' : ''}</div>
           <div class="menu-row">${r.layers.map(l => A.icon(l, 34)).join('<span class="plus">+</span>')}</div>
         </div>`;
       }).join('')}</div>`);
@@ -1643,8 +1692,13 @@
       case 'saveName': return saveName();
       case 'deleteProfile': return deleteProfile();
       case 'levels': return levelsSheet();
+      case 'setTheme': return send({ type: 'setTheme', theme: d.id || null });
+      case 'themeShop':
+        // Locked pack in the lobby: leave the table view for the shop, the table stays open.
+        toast('Dieses Pack gibt es im 🛒 Shop unter „Themen“.');
+        return;
       case 'openShop':
-        shopTab = 'trays';
+        shopTab = 'themes';
         window.scrollTo(0, 0);
         return render();
       case 'closeShop':
