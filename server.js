@@ -367,6 +367,15 @@ async function handleApi(req, res, url) {
     await Profiles.save(prof);
     return json(res, 200, { profile: Profiles.publicView(prof) });
   }
+  if (url.pathname === '/api/profile/delete') {
+    const prof = await profileFrom(body);
+    if (!prof) return json(res, 404, { error: 'Profil nicht gefunden.', missing: true });
+    queue.delete(prof.id);
+    // Tables keep running; the player just no longer earns XP there.
+    for (const room of rooms.values()) for (const p of room.players) if (p.profile && p.profile.id === prof.id) p.profile = null;
+    await Profiles.remove(prof);
+    return json(res, 200, { ok: true });
+  }
 
   // Everything below needs a profile.
   const prof = await profileFrom(body);

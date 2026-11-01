@@ -83,8 +83,14 @@ async function save(p) {
   else { loadLocal()[p.id] = row; saveLocal(); }
 }
 
+async function remove(p) {
+  cache.delete(p.id);
+  if (SB_URL) await sb('DELETE', `?id=eq.${encodeURIComponent(p.id)}`);
+  else { delete loadLocal()[p.id]; saveLocal(); }
+}
+
 function publicView(p) {
   return { id: p.id, name: p.name, xp: p.xp, games: p.games, wins: p.wins, tutorialDone: p.tutorialDone };
 }
 
-module.exports = { create, get, auth, save, publicView, usingSupabase: !!SB_URL };
+module.exports = { create, get, auth, save, remove, publicView, usingSupabase: !!SB_URL };

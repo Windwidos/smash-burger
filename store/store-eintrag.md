@@ -38,11 +38,19 @@ Los geht's – ab in die Küche!
 **Tags:** Kartenspiel, Partyspiel, Multiplayer, Familie
 **Altersfreigabe (IARC-Fragebogen):** keine Gewalt, keine Glücksspiele, kein Chat → voraussichtlich USK 0 / PEGI 3
 **Datenschutzerklärung:** https://smash-burger.onrender.com/datenschutz.html
-**Kontakt-E-Mail:** (deine E-Mail)
+**Impressum:** https://smash-burger.onrender.com/impressum.html
+**Entwickler:** DuOh Corporation UG (haftungsbeschränkt), Schmiedstraße 5, 52062 Aachen
+**Kontakt-E-Mail:** info@duohcorporation.com
+**Telefon:** +49 170 8388703
 
 **Datensicherheit (Formular in der Play Console):**
-- Werden Daten erhoben? Ja → „Persönliche Daten: Name“ (Spielername), Zweck: App-Funktionalität, nicht geteilt, nicht optional (für das Spiel nötig), Verschlüsselung bei Übertragung: Ja (HTTPS).
-- Können Nutzer:innen die Löschung beantragen? Daten werden automatisch nach max. 6 Stunden gelöscht.
+- Werden Daten erhoben? Ja:
+  - „Persönliche Daten → Name“ (Spielername) – Zweck: App-Funktionalität, nicht geteilt, erforderlich
+  - „App-Aktivität → Sonstige Aktionen“ (XP, Level, Spiele/Siege) – Zweck: App-Funktionalität, nicht geteilt
+  - „Geräte- oder andere IDs“ (zufällige Profilkennung) – Zweck: App-Funktionalität, nicht geteilt
+- Verschlüsselung bei Übertragung: Ja (HTTPS)
+- Können Nutzer:innen die Löschung beantragen? Ja – in der App (✏️ neben dem Namen → „Profil löschen“) oder per E-Mail an info@duohcorporation.com
+- Link zur Kontolöschung (falls gefragt): https://smash-burger.onrender.com/datenschutz.html (Abschnitt 5)
 - Keine Werbung, kein Tracking.
 
 **Grafiken in diesem Ordner:**

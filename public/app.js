@@ -343,6 +343,10 @@
 
   const roomParam = () => (new URLSearchParams(location.search).get('room') || '').toUpperCase();
   const privacyUrl = () => (SERVER ? CONFIG.publicUrl : '') + '/datenschutz.html';
+  const legalLinks = () => `<div class="legal-links">
+      <a class="link small" href="${esc(privacyUrl())}" target="_blank" rel="noopener">Datenschutz</a>
+      <a class="link small" href="${esc(privacyUrl().replace('datenschutz', 'impressum'))}" target="_blank" rel="noopener">Impressum</a>
+    </div>`;
 
   function renderLoading() {
     app.innerHTML = `<div class="home"><img class="logo-img" src="img/logo.png" alt="Smash Burger"><p class="wait">Küche wird vorgeheizt …</p></div>`;
@@ -360,7 +364,7 @@
           <input id="name" maxlength="18" autocomplete="nickname" value="${esc(localStorage.getItem(LS_NAME) || '')}" placeholder="Dein Name">
           <button class="btn primary big" data-do="onboard">Los geht's!</button>
         </div>
-        <a class="link small" href="${esc(privacyUrl())}" target="_blank" rel="noopener">Datenschutz</a>
+        ${legalLinks()}
       </div>`;
   }
 
@@ -407,7 +411,7 @@
           ${profile.tutorialDone ? '<button class="link" data-do="tutorial">🎓 Tutorial</button>' : ''}
           <button class="link" data-do="levels">🏅 Level</button>
         </div>
-        <a class="link small" href="${esc(privacyUrl())}" target="_blank" rel="noopener">Datenschutz</a>
+        ${legalLinks()}
       </div>`;
   }
 
@@ -441,7 +445,24 @@
   function nameSheet() {
     openSheet(`<h2>✏️ Name ändern</h2>
       <input id="newName" maxlength="18" value="${esc(profile.name)}">
-      <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-do="saveName">Speichern</button></div>`);
+      <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-do="saveName">Speichern</button></div>
+      <hr class="sep">
+      <h3>Profil löschen</h3>
+      <p class="note">Löscht deinen Namen, dein Level und deine Statistik endgültig.</p>
+      <button class="btn danger" data-do="deleteProfile">🗑️ Profil löschen</button>`);
+  }
+
+  async function deleteProfile() {
+    if (!confirm('Profil wirklich löschen? Dein Level und deine Statistik sind danach weg.')) return;
+    try {
+      await post('/api/profile/delete', withProfile({}));
+    } catch (e) {
+      if (!/Profil/.test(e.message)) return toast(e.message);
+    }
+    dropProfile();
+    closeSheet();
+    toast('Dein Profil wurde gelöscht.');
+    render();
   }
 
   function levelsSheet() {
@@ -1343,6 +1364,7 @@
         return render();
       case 'editName': return nameSheet();
       case 'saveName': return saveName();
+      case 'deleteProfile': return deleteProfile();
       case 'levels': return levelsSheet();
       case 'home': return leaveTable();
       case 'again':

@@ -445,3 +445,6 @@ input:focus { border-color: var(--orange); }
   .chef-panel { padding-left: 104px; }
   .chef-panel .chef-peek { height: 132px; }
 }
+
+.legal-links { display: flex; justify-content: center; gap: 14px; }
+.sep { border: 0; border-top: 2px dashed var(--line); margin: 18px 0 12px; }
