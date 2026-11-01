@@ -8,9 +8,11 @@
     "sync": "node build-www.js && npx cap sync android"
   },
   "dependencies": {
+    "@capacitor-community/admob": "^8.3.0",
     "@capacitor/android": "^8.6.0",
     "@capacitor/app": "^8.0.0",
-    "@capacitor/core": "^8.6.0"
+    "@capacitor/core": "^8.6.0",
+    "@capgo/native-purchases": "^8.9.6"
   },
   "devDependencies": {
     "@capacitor/assets": "^4.0.0",

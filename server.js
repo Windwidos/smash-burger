@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
 const E = require('./public/engine.js');
+const Shop = require('./public/shop.js');
 const Profiles = require('./profiles.js');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -22,6 +23,9 @@ const TUTORIAL_RIG = ['beef', 'cheese', 'salad', 'bun', 'tomato', 'steal', 'bun'
 const TUTORIAL_BOT_RIG = ['beef', 'salad', 'tomato', 'chicken', 'bun', 'bun'];
 // Attacks get animated on the clients; bots wait this much longer afterwards so nobody misses what happened.
 const FX_PAUSE = 2600;
+const EMOTE_SHOW_MS = 4000;
+const EMOTE_COOLDOWN_MS = 2500;
+const BOT_TRAYS = ['classic', 'wood', 'diner', 'mint', 'picnic'];
 const TUTORIAL_BONUS_XP = 50;
 
 // Matchmaking: level range starts narrow and widens the longer someone waits.
@@ -60,7 +64,9 @@ function newPlayer(name, isBot, profile, level) {
 
 function newBot(room, level) {
   const used = new Set(room.players.map(p => p.name));
-  return newPlayer(BOT_NAMES.find(n => !used.has(n)) || 'Bot', true, null, level);
+  const bot = newPlayer(BOT_NAMES.find(n => !used.has(n)) || 'Bot', true, null, level);
+  bot.botTray = BOT_TRAYS[crypto.randomInt(BOT_TRAYS.length)];
+  return bot;
 }
 
 function newRoom(kind, players) {
@@ -87,10 +93,19 @@ function roomView(room, idx) {
     host: room.players.findIndex(p => p.pid === room.hostPid),
     players: room.players.map(p => ({
       name: p.name, isBot: p.isBot, connected: p.isBot || p.clients.size > 0, level: p.level,
+      tray: p.profile ? trayOf(p.profile) : p.botTray || 'classic',
+      supporter: !!(p.profile && p.profile.supporter),
     })),
     game: st ? E.viewFor(st, idx) : null,
     result: room.results ? room.results[idx] : null,
+    // Emotes of the last few seconds; clients show each one once (by id).
+    emotes: (room.emotes || []).filter(e => Date.now() - e.t < EMOTE_SHOW_MS),
   };
+}
+
+function trayOf(prof) {
+  const id = prof.equipped && prof.equipped.tray;
+  return id && Shop.ownsTray(prof, id) ? id : 'classic';
 }
 
 // Hands out XP once when a game has a winner.
@@ -110,15 +125,43 @@ function settle(room) {
       xp += bonus;
       prof.tutorialDone = true;
     }
+    const coins = Shop.gameCoins(won, burgers) + (bonus ? 50 : 0);
     const before = E.levelInfo(prof.xp);
     prof.xp += xp;
+    prof.coins += coins;
     prof.games += 1;
     if (won) prof.wins += 1;
     const after = E.levelInfo(prof.xp);
     p.level = after.level;
     Profiles.save(prof).catch(e => console.error('Profil speichern:', e.message));
-    return { xp, won, burgers, bonus, before, after, totalXp: prof.xp };
+    return { xp, coins, won, burgers, bonus, before, after, totalXp: prof.xp, doubled: false };
   });
+}
+
+// "Belohnung verdoppeln" after a game (rewarded video, or free for supporters): XP and coins once more.
+function doubleResult(room, idx) {
+  const r = room.results && room.results[idx];
+  const p = room.players[idx];
+  if (!r || r.doubled || !p.profile) return null;
+  const prof = p.profile;
+  prof.xp += r.xp;
+  prof.coins += r.coins;
+  r.doubled = true;
+  r.xp *= 2;
+  r.coins *= 2;
+  r.after = E.levelInfo(prof.xp);
+  r.totalXp = prof.xp;
+  p.level = r.after.level;
+  return r;
+}
+
+// Daily cap for rewarded videos; returns false when used up.
+function useAd(prof) {
+  const day = Profiles.today();
+  if (prof.adDay !== day) { prof.adDay = day; prof.adCount = 0; }
+  if (prof.adCount >= Shop.ADS_PER_DAY) return false;
+  prof.adCount += 1;
+  return true;
 }
 
 function broadcast(room) {
@@ -258,6 +301,28 @@ function json(res, status, obj) {
 function handleLobbyAction(room, idx, a) {
   const isHost = room.players[idx].pid === room.hostPid;
   switch (a.type) {
+    case 'emote': {
+      const me = room.players[idx];
+      const emote = Shop.EMOTES.find(e => e.id === a.id);
+      const allowed = emote && (me.profile ? Shop.ownsPack(me.profile, emote.pack) : emote.pack === 'free');
+      if (!allowed) return 'Dieses Emote hast du noch nicht.';
+      if (Date.now() - (me.lastEmote || 0) < EMOTE_COOLDOWN_MS) return 'Nicht so schnell!';
+      me.lastEmote = Date.now();
+      room.emoteSeq = (room.emoteSeq || 0) + 1;
+      room.emotes = (room.emotes || []).filter(e => Date.now() - e.t < EMOTE_SHOW_MS).concat({ id: room.emoteSeq, p: idx, e: emote.id, t: Date.now() });
+      setTimeout(() => rooms.has(room.code) && broadcast(room), EMOTE_SHOW_MS + 100); // let bubbles disappear
+      return null;
+    }
+    case 'double': {
+      const prof = room.players[idx].profile;
+      const r = room.results && room.results[idx];
+      if (!prof || !r) return 'Hier gibt es nichts zu verdoppeln.';
+      if (r.doubled) return 'Schon verdoppelt.';
+      if (!prof.supporter && !useAd(prof)) return 'Für heute sind alle Videos aufgebraucht – morgen geht es weiter.';
+      doubleResult(room, idx);
+      Profiles.save(prof).catch(e => console.error('Profil speichern:', e.message));
+      return null;
+    }
     case 'addBot': {
       if (!isHost) return 'Nur der Gastgeber kann Bots hinzufügen.';
       if (room.state) return 'Das Spiel läuft schon.';
@@ -367,6 +432,57 @@ async function handleApi(req, res, url) {
     await Profiles.save(prof);
     return json(res, 200, { profile: Profiles.publicView(prof) });
   }
+  // --- Shop ---
+  if (url.pathname.startsWith('/api/shop/') || url.pathname === '/api/iap/grant' || url.pathname === '/api/ads/coins') {
+    const prof = await profileFrom(body);
+    if (!prof) return json(res, 404, { error: 'Profil nicht gefunden.', missing: true });
+    const reply = () => json(res, 200, { profile: Profiles.publicView(prof) });
+
+    if (url.pathname === '/api/shop/buy') {
+      const [kind, id] = String(body.item || '').split(':');
+      const item = kind === 'tray' ? Shop.trayById(id) : kind === 'pack' ? Shop.packById(id) : null;
+      if (!item || item.supporter || item.price <= 0) return json(res, 400, { error: 'Das gibt es nicht zu kaufen.' });
+      const key = body.item;
+      if (prof.owned.includes(key)) return json(res, 400, { error: 'Das hast du schon.' });
+      if (prof.coins < item.price) return json(res, 400, { error: 'Dafür reichen deine Münzen noch nicht.' });
+      prof.coins -= item.price;
+      prof.owned = prof.owned.concat(key);
+      if (kind === 'tray') prof.equipped = { ...prof.equipped, tray: id };
+      await Profiles.save(prof);
+      return reply();
+    }
+    if (url.pathname === '/api/shop/equip') {
+      if (!Shop.ownsTray(prof, body.tray)) return json(res, 400, { error: 'Dieses Tablett hast du noch nicht.' });
+      prof.equipped = { ...prof.equipped, tray: body.tray };
+      await Profiles.save(prof);
+      return reply();
+    }
+    if (url.pathname === '/api/ads/coins') {
+      if (!useAd(prof)) return json(res, 400, { error: 'Für heute sind alle Videos aufgebraucht – morgen geht es weiter.' });
+      prof.coins += Shop.AD_COINS;
+      await Profiles.save(prof);
+      return reply();
+    }
+    if (url.pathname === '/api/iap/grant') {
+      // Google Play purchase from the Android app. Each purchase token is redeemed only once.
+      const product = Shop.iapById(body.product);
+      const token = String(body.purchaseToken || '');
+      if (!product || token.length < 10 || token.length > 4000) return json(res, 400, { error: 'Ungültiger Kauf.' });
+      const fresh = await Profiles.claimPurchase(token, prof.id, product.id);
+      if (fresh) {
+        prof.coins += product.coins;
+        if (product.supporter) prof.supporter = true;
+        await Profiles.save(prof);
+      } else if (product.supporter && !prof.supporter) {
+        // Restored on a new profile (e.g. app reinstalled): the status comes back, the coins only came once.
+        prof.supporter = true;
+        await Profiles.save(prof);
+      }
+      return json(res, 200, { profile: Profiles.publicView(prof), granted: fresh });
+    }
+    return json(res, 404, { error: 'Nicht gefunden' });
+  }
+
   if (url.pathname === '/api/profile/delete') {
     const prof = await profileFrom(body);
     if (!prof) return json(res, 404, { error: 'Profil nicht gefunden.', missing: true });

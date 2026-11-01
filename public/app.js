@@ -3,6 +3,7 @@
   const E = window.SmashEngine;
   const A = window.Art;
   const T = E.TYPES;
+  const S = window.SmashShop;
   const app = document.getElementById('app');
   const sheet = document.getElementById('sheet');
   const toastEl = document.getElementById('toast');
@@ -186,6 +187,146 @@
     }
   }
 
+  // ---------- Werbung & Käufe (nur in der Android-App) ----------
+  // Rewarded videos via @capacitor-community/admob, Google Play purchases via @capgo/native-purchases.
+  // ADS_TEST_MODE true = only Google test ads until the AdMob ad unit for Smash Burger exists.
+
+  const Cap = window.Capacitor;
+  const isNative = !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform());
+  const AdMob = isNative && Cap.Plugins.AdMob;
+  const Billing = isNative && Cap.Plugins.NativePurchases;
+  const ADS_TEST_MODE = true;
+  const REWARDED_ID = { test: 'ca-app-pub-3940256099942544/5224354917', live: '' };
+  let adsReady = null;
+  let adsNpa = false;
+  const iapPrices = {};
+
+  function initAds() {
+    if (!AdMob) return Promise.resolve(false);
+    adsReady = adsReady || (async () => {
+      try {
+        await AdMob.initialize({ initializeForTesting: ADS_TEST_MODE, maxAdContentRating: 'Teen' });
+      } catch (e) {
+        console.warn('[ads] init', e);
+        return false;
+      }
+      try {
+        let info = await AdMob.requestConsentInfo();
+        if (info.isConsentFormAvailable && info.status === 'REQUIRED') info = await AdMob.showConsentForm();
+        return info.canRequestAds !== false;
+      } catch (e) {
+        adsNpa = true; // no consent message set up: non-personalised ads only
+        return true;
+      }
+    })();
+    return adsReady;
+  }
+
+  // 'rewarded' = watched to the end, 'cancelled', 'unavailable'
+  async function showRewarded() {
+    if (!(await initAds())) return 'unavailable';
+    const adId = ADS_TEST_MODE || !REWARDED_ID.live ? REWARDED_ID.test : REWARDED_ID.live;
+    const handles = [];
+    try {
+      await AdMob.prepareRewardVideoAd({ adId, isTesting: ADS_TEST_MODE, npa: adsNpa });
+      let rewarded = false;
+      let done;
+      const closed = new Promise(r => { done = r; });
+      handles.push(await AdMob.addListener('onRewardedVideoAdReward', () => { rewarded = true; }));
+      handles.push(await AdMob.addListener('onRewardedVideoAdDismissed', () => done('closed')));
+      handles.push(await AdMob.addListener('onRewardedVideoAdFailedToShow', () => done('failed')));
+      await AdMob.showRewardVideoAd();
+      if ((await closed) === 'failed') return 'unavailable';
+      return rewarded ? 'rewarded' : 'cancelled';
+    } catch (e) {
+      console.warn('[ads] rewarded', e);
+      return 'unavailable';
+    } finally {
+      handles.forEach(h => h && h.remove && h.remove());
+    }
+  }
+
+  async function loadIapPrices() {
+    if (!Billing) return;
+    try {
+      const { products } = await Billing.getProducts({ productIdentifiers: S.IAP.map(p => p.id), productType: 'inapp' });
+      for (const p of products || []) if (p.priceString) iapPrices[p.identifier] = p.priceString;
+    } catch (e) {
+      console.warn('[billing] products', e);
+    }
+  }
+
+  // Hands a Google Play purchase to the server (once per token); coin packs are then consumed so they can be bought again.
+  async function redeem(productId, purchaseToken) {
+    const r = await post('/api/iap/grant', withProfile({ product: productId, purchaseToken }));
+    profile = r.profile;
+    const item = S.iapById(productId);
+    if (item && !item.supporter) await Billing.consumePurchase({ purchaseToken }).catch(e => console.warn('[billing] consume', e));
+    return r.granted;
+  }
+
+  async function buyIap(productId) {
+    if (!Billing) return toast('Münzen kannst du in der Android-App kaufen.');
+    const item = S.iapById(productId);
+    try {
+      const t = await Billing.purchaseProduct({
+        productIdentifier: productId, productType: 'inapp', quantity: 1,
+        ...(item.supporter ? {} : { isConsumable: false, autoAcknowledgePurchases: false }),
+      });
+      if (t.purchaseState !== '1' || !t.purchaseToken) return toast('Der Kauf wird noch bearbeitet – die Münzen kommen, sobald Google ihn bestätigt.');
+      await redeem(productId, t.purchaseToken);
+      celebrate(item.supporter ? '⭐ Danke für deine Unterstützung!' : `+${item.coins} 🪙`);
+      render();
+    } catch (e) {
+      if (!/cancel/i.test(String((e && e.message) || e))) toast('Kauf fehlgeschlagen. Bitte später nochmal versuchen.');
+    }
+  }
+
+  // Picks up purchases that never reached the server (app closed mid-purchase, pending payments, reinstall).
+  async function recoverPurchases() {
+    if (!Billing || !profileKey) return;
+    try {
+      const { purchases } = await Billing.getPurchases({ productType: 'inapp' });
+      for (const t of purchases || []) {
+        if (t.purchaseState === '1' && t.purchaseToken && S.iapById(t.productIdentifier)) await redeem(t.productIdentifier, t.purchaseToken);
+      }
+      if (!session) render();
+    } catch (e) {
+      console.warn('[billing] recover', e);
+    }
+  }
+
+  async function watchForCoins() {
+    const res = await showRewarded();
+    if (res === 'unavailable') return toast('Gerade ist kein Video verfügbar. Versuch es gleich nochmal.');
+    if (res !== 'rewarded') return;
+    try {
+      profile = (await post('/api/ads/coins', withProfile({}))).profile;
+      celebrate(`+${S.AD_COINS} 🪙`);
+      render();
+    } catch (e) {
+      toast(e.message);
+    }
+  }
+
+  async function doubleReward() {
+    if (!profile.supporter) {
+      const res = await showRewarded();
+      if (res === 'unavailable') return toast('Gerade ist kein Video verfügbar. Versuch es gleich nochmal.');
+      if (res !== 'rewarded') return;
+    }
+    await send({ type: 'double' });
+    loadProfile();
+  }
+
+  function celebrate(text) {
+    const el = document.createElement('div');
+    el.className = 'celebrate';
+    el.textContent = text;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1900);
+  }
+
   // ---------- Schnelles Spiel (Matchmaking) ----------
 
   let mmTimer = null;
@@ -338,7 +479,99 @@
     if (profileLoading) return renderLoading();
     if (!profile) return renderOnboarding();
     if (mm) return renderMatching();
+    if (shopTab) return renderShop();
     renderHome();
+  }
+
+  // ---------- Shop ----------
+
+  let shopTab = null; // null = shop closed, else 'trays' | 'emotes' | 'coins'
+
+  function coinChip() {
+    return `<span class="coins">🪙 <b>${profile.coins || 0}</b></span>`;
+  }
+
+  function traySwatch(id) {
+    return `<div class="swatch tray skin-${id}"><div class="stack"><div class="stack-cards">${A.icon('beef', 18)}${A.icon('cheese', 18)}${A.icon('bun', 18)}</div></div></div>`;
+  }
+
+  function renderShop() {
+    const eq = (profile.equipped && profile.equipped.tray) || 'classic';
+    const adsLeft = S.ADS_PER_DAY - (profile.adsToday || 0);
+    let body = '';
+    if (shopTab === 'trays') {
+      body = `<div class="shop-grid">${S.TRAYS.map(t => {
+        const owned = S.ownsTray(profile, t.id);
+        const btn = eq === t.id ? '<span class="pill ok">✓ Benutzt</span>'
+          : owned ? `<button class="btn small" data-do="equipTray" data-id="${t.id}">Benutzen</button>`
+          : t.supporter ? '<span class="pill">⭐ Unterstützer</span>'
+          : `<button class="btn small primary" data-do="buyItem" data-id="tray:${t.id}" ${profile.coins < t.price ? 'disabled' : ''}>🪙 ${t.price}</button>`;
+        return `<div class="shop-item ${eq === t.id ? 'on' : ''}">${traySwatch(t.id)}<b>${esc(t.name)}</b>${btn}</div>`;
+      }).join('')}</div>`;
+    } else if (shopTab === 'emotes') {
+      const groups = [{ pack: 'free', name: 'Gratis', price: 0 }].concat(S.PACKS);
+      body = groups.map(g => {
+        const owned = S.ownsPack(profile, g.pack);
+        const btn = owned ? '<span class="pill ok">✓ Freigeschaltet</span>'
+          : g.supporter ? '<span class="pill">⭐ Unterstützer</span>'
+          : `<button class="btn small primary" data-do="buyItem" data-id="pack:${g.id}" ${profile.coins < g.price ? 'disabled' : ''}>🪙 ${g.price}</button>`;
+        return `<div class="emote-pack"><div class="ep-head"><b>${esc(g.name)}</b>${btn}</div>
+          <div class="ep-list">${S.EMOTES.filter(e => e.pack === g.pack).map(e => `<span class="emote-chip">${e.icon} ${esc(e.text)}</span>`).join('')}</div></div>`;
+      }).join('');
+    } else {
+      const sup = S.IAP.find(p => p.supporter);
+      body = `
+        ${isNative ? `
+          <button class="shop-video" data-do="adCoins" ${adsLeft <= 0 ? 'disabled' : ''}>
+            <span>📺</span><span><b>Video ansehen: +${S.AD_COINS} 🪙</b><small>${adsLeft > 0 ? `Noch ${adsLeft} Videos heute` : 'Morgen wieder verfügbar'}</small></span>
+          </button>` : ''}
+        <div class="shop-grid">${S.IAP.filter(p => !p.supporter).map(p => `
+          <div class="shop-item coin-pack">${p.tag ? `<span class="tag">${p.tag}</span>` : ''}
+            <div class="coin-big">🪙</div><b>${p.label}</b>
+            <button class="btn small primary" data-do="buyIap" data-id="${p.id}">${esc(iapPrices[p.id] || p.price)}</button>
+          </div>`).join('')}</div>
+        <div class="supporter-card ${profile.supporter ? 'on' : ''}">
+          <img src="img/chef-cheer.png" alt="">
+          <div>
+            <h3>⭐ Unterstützer:in werden</h3>
+            <ul>
+              <li>Goldenes Tablett & Küchenchef-Emote 👑</li>
+              <li>⭐ neben deinem Namen</li>
+              <li>Belohnung verdoppeln ohne Video</li>
+              <li>+${sup.coins} 🪙 obendrauf</li>
+            </ul>
+            ${profile.supporter ? '<span class="pill ok">Danke, du bist dabei! ❤️</span>'
+              : `<button class="btn primary" data-do="buyIap" data-id="${sup.id}">${esc(iapPrices[sup.id] || sup.price)} – einmalig</button>`}
+          </div>
+        </div>
+        ${!isNative ? '<p class="note center">Münzen kaufen und Videos gibt es in der Android-App.</p>' : ''}`;
+    }
+    app.innerHTML = `
+      <div class="home shop">
+        <div class="shop-top">
+          <button class="tbtn" data-do="closeShop">← Zurück</button>
+          <h2>🛒 Shop</h2>
+          ${coinChip()}
+        </div>
+        <div class="tabs">
+          <button class="${shopTab === 'trays' ? 'on' : ''}" data-do="shopTab" data-id="trays">Tabletts</button>
+          <button class="${shopTab === 'emotes' ? 'on' : ''}" data-do="shopTab" data-id="emotes">Emotes</button>
+          <button class="${shopTab === 'coins' ? 'on' : ''}" data-do="shopTab" data-id="coins">Münzen</button>
+        </div>
+        ${body}
+        <p class="note center">Münzen gibt es für jede Runde: 10 fürs Mitspielen, 5 pro Burger, 15 für den Sieg.</p>
+      </div>`;
+  }
+
+  async function shopPost(path, body) {
+    try {
+      profile = (await post(path, withProfile(body))).profile;
+      render();
+      return true;
+    } catch (e) {
+      if (!handleMissing(e)) toast(e.message);
+      return false;
+    }
   }
 
   const roomParam = () => (new URLSearchParams(location.search).get('room') || '').toUpperCase();
@@ -378,12 +611,12 @@
           <div class="pc-top">
             <div class="pc-lv">${levelBadge(info.level)}</div>
             <div class="pc-main">
-              <div class="pc-name">${esc(profile.name)} <button class="icon-btn" data-do="editName" aria-label="Namen ändern">✏️</button></div>
+              <div class="pc-name">${esc(profile.name)}${profile.supporter ? ' <span title="Unterstützer:in">⭐</span>' : ''} <button class="icon-btn" data-do="editName" aria-label="Namen ändern">✏️</button></div>
               <div class="pc-title">${esc(info.title)}</div>
               ${xpBar(info)}
             </div>
           </div>
-          <div class="pc-stats"><span><b>${profile.games}</b> Spiele</span><span><b>${profile.wins}</b> Siege</span></div>
+          <div class="pc-stats"><span><b>${profile.games}</b> Spiele</span><span><b>${profile.wins}</b> Siege</span><span class="spacer"></span>${coinChip()}</div>
         </div>
         ${room ? `
           <div class="invite">
@@ -404,6 +637,9 @@
           </button>
           <button class="mbtn friends" data-do="friends">
             <span class="mb-ico">👥</span><span class="mb-txt"><b>Mit Freunden</b><small>Eigenen Tisch eröffnen oder beitreten</small></span>
+          </button>
+          <button class="mbtn shopbtn" data-do="openShop">
+            <span class="mb-ico">🛒</span><span class="mb-txt"><b>Shop</b><small>Tabletts, Emotes & Münzen</small></span>
           </button>
         </div>
         <div class="home-links">
@@ -533,7 +769,8 @@
       stacks.push(`<div class="stack new target" data-do="stack" data-p="${pi}" data-s="new"><div class="stack-cards">＋</div><div class="stack-label">Neuer Burger</div></div>`);
     }
     if (!stacks.length) stacks.push('<div class="empty-tray">Leeres Tablett</div>');
-    return `<div class="tray" data-tray="${pi}">${stacks.join('')}</div>`;
+    const skin = (view.players[pi] && view.players[pi].tray) || 'classic';
+    return `<div class="tray skin-${esc(skin)}" data-tray="${pi}">${stacks.join('')}</div>`;
   }
 
   function handCard(c) {
@@ -616,6 +853,7 @@
           <button class="pile deck" data-do="noop" title="Nachziehstapel"><span class="back"></span><b>${g.deckCount}</b></button>
           <button class="pile trash" data-do="trash" title="Müll">${top ? miniCard(top, 20) : '<span class="empty">🗑️</span>'}<b>${g.trash.length}</b></button>
           <div class="spacer"></div>
+          ${view.kind !== 'tutorial' ? '<button class="tbtn" data-do="emotes" aria-label="Emotes">💬</button>' : ''}
           <button class="tbtn" data-do="menu">📋 Menü</button>
           <button class="tbtn" data-do="more">⋯</button>
         </header>
@@ -624,7 +862,7 @@
           ${others.map(({ p, i }) => `
             <div class="opp ${g.current === i ? 'active' : ''} ${view.players[i] && !view.players[i].connected ? 'offline' : ''}" data-player="${i}">
               <div class="opp-head">
-                <span class="oname">${levelBadge((view.players[i] || {}).level || 1)} ${g.current === i ? '🍳 ' : ''}${esc(p.name)}</span>
+                <span class="oname">${levelBadge((view.players[i] || {}).level || 1)} ${g.current === i ? '🍳 ' : ''}${esc(p.name)}${(view.players[i] || {}).supporter ? ' ⭐' : ''}</span>
                 <span class="ometa"><span class="hc">${'<i></i>'.repeat(p.handCount)}</span> ✓${E.completedCount(p.tray, R)}/${R.length}</span>
               </div>
               ${trayHTML(p, i, 20, tg)}
@@ -647,7 +885,40 @@
         ${g.winner != null ? resultHTML(g) : ''}
       </div>`;
     animateResult();
+    showEmotes();
     if (g.log.length) lastLogN = Math.max(lastLogN, g.log[g.log.length - 1].n);
+  }
+
+  // ---------- Emotes ----------
+
+  const emotesShown = new Set();
+
+  function emoteSheet() {
+    const list = profile ? S.ownedEmotes(profile) : S.EMOTES.filter(e => e.pack === 'free');
+    const locked = S.EMOTES.length - list.length;
+    openSheet(`<h2>💬 Emotes</h2>
+      <div class="emote-grid">${list.map(e => `<button class="emote-btn" data-do="sendEmote" data-id="${e.id}"><span>${e.icon}</span>${esc(e.text)}</button>`).join('')}</div>
+      ${locked ? `<p class="note center">${locked} weitere Emotes gibt es im 🛒 Shop.</p>` : ''}`, 'ctx');
+  }
+
+  // Bubbles float over the panel of whoever sent the emote; each emote is shown once.
+  function showEmotes() {
+    for (const em of view.emotes || []) {
+      const key = `${view.code}:${em.id}`;
+      if (emotesShown.has(key)) continue;
+      emotesShown.add(key);
+      const e = S.EMOTES.find(x => x.id === em.e);
+      const panel = app.querySelector(`[data-player="${em.p}"]`);
+      if (!e || !panel) continue;
+      const r = panel.getBoundingClientRect();
+      const el = document.createElement('div');
+      el.className = 'emote-bubble';
+      el.innerHTML = `<span>${e.icon}</span>${esc(e.text)}`;
+      el.style.left = `${Math.min(window.innerWidth - 170, Math.max(8, r.left + 12))}px`;
+      el.style.top = `${Math.max(8, r.top + 4)}px`;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 3200);
+    }
   }
 
   function resultHTML(g) {
@@ -679,7 +950,10 @@
                 <div class="xpbar big"><i data-from="${levelUp ? 0 : Math.round(r.before.into / r.before.need * 100)}" data-to="${Math.round(r.after.into / r.after.need * 100)}"></i><span>${r.after.into} / ${r.after.need} XP</span></div>
               </div>
               ${levelUp ? `<div class="level-up">⭐ Level ${r.after.level} erreicht! <small>${esc(r.after.title)}</small></div>` : ''}
-            </div>` : ''}
+              <div class="coin-gain">+${r.coins} 🪙 Münzen${r.doubled ? ' <span class="pill ok">×2</span>' : ''}</div>
+            </div>
+            ${!r.doubled && (isNative || (profile && profile.supporter)) ? `
+              <button class="btn big double-btn" data-do="double">${profile && profile.supporter ? '⭐ Belohnung verdoppeln' : '▶️ Video ansehen: Belohnung ×2'}</button>` : ''}` : ''}
           ${buttons}
         </div>
       </div>`;
@@ -1366,6 +1640,31 @@
       case 'saveName': return saveName();
       case 'deleteProfile': return deleteProfile();
       case 'levels': return levelsSheet();
+      case 'openShop':
+        shopTab = 'trays';
+        window.scrollTo(0, 0);
+        return render();
+      case 'closeShop':
+        shopTab = null;
+        return render();
+      case 'shopTab':
+        shopTab = d.id;
+        return render();
+      case 'buyItem': {
+        const ok = await shopPost('/api/shop/buy', { item: d.id });
+        if (ok) celebrate('🎉 Freigeschaltet!');
+        return;
+      }
+      case 'equipTray': return shopPost('/api/shop/equip', { tray: d.id });
+      case 'buyIap': return buyIap(d.id);
+      case 'adCoins': return watchForCoins();
+      case 'emotes': return emoteSheet();
+      case 'sendEmote':
+        closeSheet();
+        return post('/api/action', { ...session, action: { type: 'emote', id: d.id } })
+          .then(j => applyView(j.view))
+          .catch(e => toast(e.message));
+      case 'double': return doubleReward();
       case 'home': return leaveTable();
       case 'again':
         await leaveTable();
@@ -1442,6 +1741,10 @@
         ui = freshUi();
         return render();
       }
+      if (shopTab && !session) {
+        shopTab = null;
+        return render();
+      }
       capApp.minimizeApp();
     });
     // Reconnect when the app comes back from the background.
@@ -1449,7 +1752,8 @@
   }
 
   wakeServer();
-  loadProfile();
+  loadProfile().then(recoverPurchases);
+  loadIapPrices();
   if (session) connect();
   render();
 })();
