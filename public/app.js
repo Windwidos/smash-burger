@@ -530,13 +530,18 @@
           </div>`;
         }).join('')}`;
     } else if (shopTab === 'trays') {
-      body = `<div class="shop-grid">${S.TRAYS.map(t => {
-        const owned = S.ownsTray(profile, t.id);
+      const lv = E.levelInfo(profile.xp).level;
+      body = `<p class="note center">Du bist Level ${lv}. Besondere Tabletts gibt es erst ab einem bestimmten Level – zwei davon schenkt dir das Spiel.</p>
+        <div class="shop-grid">${S.TRAYS.map(t => {
+        const owned = S.ownsTray(profile, t.id, lv);
+        const lockedBy = t.reward && lv < t.reward ? t.reward : t.level && lv < t.level && !owned ? t.level : 0;
         const btn = eq === t.id ? '<span class="pill ok">✓ Benutzt</span>'
           : owned ? `<button class="btn small" data-do="equipTray" data-id="${t.id}">Benutzen</button>`
           : t.supporter ? '<span class="pill">⭐ Unterstützer</span>'
+          : t.reward ? `<span class="pill">🏅 Gratis ab Level ${t.reward}</span>`
+          : lockedBy ? `<span class="pill lock">🔒 ab Level ${lockedBy}</span>`
           : `<button class="btn small primary" data-do="buyItem" data-id="tray:${t.id}" ${profile.coins < t.price ? 'disabled' : ''}>🪙 ${t.price}</button>`;
-        return `<div class="shop-item ${eq === t.id ? 'on' : ''}">${traySwatch(t.id)}<b>${esc(t.name)}</b>${btn}</div>`;
+        return `<div class="shop-item ${eq === t.id ? 'on' : ''} ${lockedBy ? 'locked' : ''}">${traySwatch(t.id)}<b>${esc(t.name)}</b>${btn}</div>`;
       }).join('')}</div>`;
     } else if (shopTab === 'emotes') {
       const groups = [{ pack: 'free', name: 'Gratis', price: 0 }].concat(S.PACKS);
@@ -998,7 +1003,8 @@
               <div class="xp-row">${levelBadge(r.after.level)}
                 <div class="xpbar big"><i data-from="${levelUp ? 0 : Math.round(r.before.into / r.before.need * 100)}" data-to="${Math.round(r.after.into / r.after.need * 100)}"></i><span>${r.after.into} / ${r.after.need} XP</span></div>
               </div>
-              ${levelUp ? `<div class="level-up">⭐ Level ${r.after.level} erreicht! <small>${esc(r.after.title)}</small></div>` : ''}
+              ${levelUp ? `<div class="level-up">⭐ Level ${r.after.level} erreicht! <small>${esc(r.after.title)}</small></div>
+                ${S.unlockedBetween(r.before.level, r.after.level).map(t => `<div class="unlock">${traySwatch(t.id)}<span><b>${esc(t.name)}</b>${t.reward ? 'geschenkt – im Shop auswählen!' : 'jetzt im Shop kaufbar'}</span></div>`).join('')}` : ''}
               <div class="coin-gain">+${r.coins} 🪙 Münzen${r.doubled ? ' <span class="pill ok">×2</span>' : ''}</div>
             </div>
             ${!r.doubled && profile && (profile.supporter || (isNative && (profile.doublesToday || 0) < S.DOUBLES_PER_DAY)) ? `

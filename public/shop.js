@@ -7,14 +7,17 @@
   'use strict';
 
   // Tablett-Designs (Aussehen nur per CSS-Klasse skin-<id>). price 0 = gratis, supporter = nur für Unterstützer:innen.
+  // level = ab diesem Level kaufbar (Statussymbole), reward = gratis ab diesem Level (nicht kaufbar).
   const TRAYS = [
     { id: 'classic', name: 'Klassisch Rot', price: 0 },
     { id: 'wood', name: 'Holzbrett', price: 250 },
-    { id: 'diner', name: 'Diner-Blau', price: 250 },
-    { id: 'mint', name: 'Pastell-Minze', price: 250 },
-    { id: 'picnic', name: 'Picknick', price: 400 },
-    { id: 'neon', name: 'Neon-Nacht', price: 500 },
-    { id: 'space', name: 'Weltall', price: 600 },
+    { id: 'diner', name: 'Diner-Blau', price: 250, level: 3 },
+    { id: 'mint', name: 'Pastell-Minze', price: 250, level: 3 },
+    { id: 'picnic', name: 'Picknick', price: 400, level: 6 },
+    { id: 'neon', name: 'Neon-Nacht', price: 500, level: 10 },
+    { id: 'space', name: 'Weltall', price: 600, level: 15 },
+    { id: 'grill', name: 'Grillmeister-Tablett', price: 0, reward: 10 },
+    { id: 'legend', name: 'Legenden-Tablett', price: 0, reward: 30 },
     { id: 'gold', name: 'Goldtablett', price: 0, supporter: true },
   ];
 
@@ -75,11 +78,21 @@
   function packById(id) { return PACKS.find(p => p.id === id); }
   function iapById(id) { return IAP.find(p => p.id === id); }
 
-  function ownsTray(profile, id) {
+  // level = the player's current level (needed for the level rewards).
+  function ownsTray(profile, id, level) {
     const t = trayById(id);
     if (!t) return false;
     if (t.supporter) return !!profile.supporter;
+    if (t.reward) return (level || 1) >= t.reward;
     return t.price === 0 || (profile.owned || []).includes(itemId.tray(id));
+  }
+
+  // Trays that became available (to buy or as a reward) between two levels – for the level-up message.
+  function unlockedBetween(fromLevel, toLevel) {
+    return TRAYS.filter(t => {
+      const at = t.reward || t.level;
+      return at && at > fromLevel && at <= toLevel;
+    });
   }
 
   function ownsPack(profile, pack) {
@@ -96,6 +109,6 @@
 
   return {
     TRAYS, EMOTES, PACKS, IAP, AD_COINS, COIN_ADS_PER_DAY, DOUBLES_PER_DAY, gameCoins, itemId, trayById, packById, iapById,
-    ownsTray, ownsPack, ownedEmotes, themeItem, ownsTheme, themePacks,
+    ownsTray, unlockedBetween, ownsPack, ownedEmotes, themeItem, ownsTheme, themePacks,
   };
 });

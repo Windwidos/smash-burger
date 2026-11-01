@@ -106,7 +106,7 @@ function roomView(room, idx) {
 
 function trayOf(prof) {
   const id = prof.equipped && prof.equipped.tray;
-  return id && Shop.ownsTray(prof, id) ? id : 'classic';
+  return id && Shop.ownsTray(prof, id, E.levelInfo(prof.xp).level) ? id : 'classic';
 }
 
 // Hands out XP once when a game has a winner.
@@ -458,6 +458,7 @@ async function handleApi(req, res, url) {
       if (!item || item.supporter || item.price <= 0) return json(res, 400, { error: 'Das gibt es nicht zu kaufen.' });
       const key = body.item;
       if (prof.owned.includes(key)) return json(res, 400, { error: 'Das hast du schon.' });
+      if (item.level && E.levelInfo(prof.xp).level < item.level) return json(res, 400, { error: `Dieses Tablett gibt es erst ab Level ${item.level}.` });
       if (prof.coins < item.price) return json(res, 400, { error: 'Dafür reichen deine Münzen noch nicht.' });
       prof.coins -= item.price;
       prof.owned = prof.owned.concat(key);
@@ -466,7 +467,7 @@ async function handleApi(req, res, url) {
       return reply();
     }
     if (url.pathname === '/api/shop/equip') {
-      if (!Shop.ownsTray(prof, body.tray)) return json(res, 400, { error: 'Dieses Tablett hast du noch nicht.' });
+      if (!Shop.ownsTray(prof, body.tray, E.levelInfo(prof.xp).level)) return json(res, 400, { error: 'Dieses Tablett hast du noch nicht.' });
       prof.equipped = { ...prof.equipped, tray: body.tray };
       await Profiles.save(prof);
       return reply();

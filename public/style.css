@@ -580,3 +580,26 @@ body[data-theme]:not([data-theme=""]) .ticker { background: rgba(255, 253, 248, 
 .tc-foot { display: flex; justify-content: flex-end; margin-top: 10px; }
 .menu-item.special { border-color: var(--gold); background: #FFFBEF; }
 .tabs button { font-size: 13.5px; }
+
+/* ---------- Level-Belohnungs-Tabletts & Sperren ---------- */
+.mytray .tray.skin-grill, .swatch.skin-grill {
+  background: repeating-linear-gradient(90deg, transparent 0 22px, rgba(20, 14, 12, .85) 22px 28px),
+    radial-gradient(circle at 25% 80%, rgba(255, 120, 30, .55), transparent 40%),
+    radial-gradient(circle at 75% 85%, rgba(255, 70, 20, .5), transparent 45%),
+    linear-gradient(#4A3A35, #2B2220);
+}
+.mytray .tray.skin-legend, .swatch.skin-legend {
+  background: linear-gradient(120deg, #5B2A9E, #B04BD8 30%, #F5B829 50%, #B04BD8 70%, #5B2A9E);
+  background-size: 300% 100%; animation: legend 6s linear infinite;
+}
+@keyframes legend { to { background-position: 300% 0; } }
+.opp .tray.skin-grill { background: #3A2E2A; }
+.opp .tray.skin-legend { background: linear-gradient(120deg, #7A3FC0, #F5B829, #7A3FC0); }
+.opp .tray.skin-grill .empty-tray, .opp .tray.skin-legend .empty-tray { color: rgba(255, 255, 255, .85); }
+.shop-item.locked .swatch { filter: grayscale(.8); opacity: .6; }
+.pill.lock { background: #EEE3D6; color: var(--muted); }
+.unlock { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 6px 8px; background: #fff; border-radius: 12px; text-align: left; font-size: 13px; }
+.unlock .swatch { width: 70px; min-height: 40px; padding: 4px; flex: none; }
+.unlock .swatch .stack { padding: 2px 3px; }
+.unlock .swatch .ico { width: 12px; height: 12px; }
+.unlock span { display: flex; flex-direction: column; }
