@@ -198,8 +198,9 @@
     return s;
   }
 
-  function log(s, text) {
-    s.log.push({ n: ++s.logSeq, text });
+  // fx describes attacks precisely (who, from where, to where) so clients can animate them.
+  function log(s, text, fx) {
+    s.log.push(fx ? { n: ++s.logSeq, text, fx } : { n: ++s.logSeq, text });
     if (s.log.length > 80) s.log.shift();
   }
 
@@ -294,7 +295,8 @@
       s.trash.splice(ti, 1);
       me.tray = withAdded(me.tray, [card], tg);
       s.pending = null;
-      log(s, `🗑️ ${me.name} fischt ${TYPES[card.t].name} aus dem Müll und legt es aufs Tablett.`);
+      log(s, `🗑️ ${me.name} fischt ${TYPES[card.t].name} aus dem Müll und legt es aufs Tablett.`,
+        { k: 'dig', by: p, cards: [card.t], to: { player: p, stack: tg === 'new' ? me.tray.length - 1 : tg } });
       afterPlay(s);
       return ok();
     }
@@ -320,7 +322,8 @@
       const stolen = victim.hand.splice(Math.floor(rng() * victim.hand.length), 1)[0];
       me.hand.push(stolen);
       s.played += 2;
-      log(s, `🃏 ${me.name} wirft zwei Mal ${TYPES[cards[0].t].name} ab und zieht blind eine Karte von ${victim.name}.`);
+      log(s, `🃏 ${me.name} wirft zwei Mal ${TYPES[cards[0].t].name} ab und zieht blind eine Karte von ${victim.name}.`,
+        { k: 'pair', by: p, victim: a.target, cards: [cards[0].t] });
       afterPlay(s);
       return ok();
     }
@@ -361,7 +364,8 @@
         me.hand.splice(hi, 1);
         tp.tray.splice(si, 1);
         s.trash.push(...st, card);
-        log(s, `🔥 ${me.name} verbrennt ${label} ${tp === me ? 'auf dem eigenen Tablett' : `von ${tp.name}`}.`);
+        log(s, `🔥 ${me.name} verbrennt ${label} ${tp === me ? 'auf dem eigenen Tablett' : `von ${tp.name}`}.`,
+          { k: 'burn', by: p, from: { player: a.target.player, stack: si }, cards: st.map(c => c.t), label });
         break;
       }
       case 'steal': {
@@ -390,7 +394,11 @@
         dst.tray = newDst;
         s.trash.push(card);
         const where = dst === me ? 'aufs eigene Tablett' : `aufs Tablett von ${dst.name}`;
-        log(s, `✋ ${me.name} klaut ${label} ${src === me ? 'vom eigenen Tablett' : `von ${src.name}`} und legt es ${where}.`);
+        log(s, `✋ ${me.name} klaut ${label} ${src === me ? 'vom eigenen Tablett' : `von ${src.name}`} und legt es ${where}.`, {
+          k: 'steal', by: p, whole, label, cards: moving.map(c => c.t),
+          from: { player: f.player, stack: si },
+          to: { player: t.player, stack: tg === 'new' ? dst.tray.length - 1 : tg },
+        });
         break;
       }
       case 'dig': {
@@ -415,7 +423,8 @@
         });
         me.hand.splice(hi, 1);
         s.trash.push(card);
-        log(s, `🔄 Ups, falscher Tisch! ${me.name} lässt alle Tabletts ${a.dir === 'next' ? 'an die nächste' : 'an die vorherige'} Person wandern.`);
+        log(s, `🔄 Ups, falscher Tisch! ${me.name} lässt alle Tabletts ${a.dir === 'next' ? 'an die nächste' : 'an die vorherige'} Person wandern.`,
+          { k: 'swap', by: p, dir: a.dir });
         break;
       }
       default:

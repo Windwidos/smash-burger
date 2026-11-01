@@ -16,7 +16,12 @@ const ROOM_TTL = 6 * 60 * 60 * 1000;
 const BOT_NAMES = ['Bot Bernd', 'Bot Paula', 'Bot Kalle', 'Bot Uschi', 'Bot Ronja', 'Bot Heinz', 'Bot Frieda'];
 const TUTORIAL_BOT = 'Koch Kalle';
 // Tutorial: the learner gets a hand that teaches the basics, then the first draws.
-const TUTORIAL_RIG = ['beef', 'cheese', 'salad', 'bun', 'tomato', 'steal', 'chicken', 'bun', 'burn'];
+// Hands for the scripted tutorial (deal + first draws). The coach steps in public/app.js rely on exactly this order:
+// you build a Cheeseburger, steal Kalle's patty, then burn his Chicken Burger.
+const TUTORIAL_RIG = ['beef', 'cheese', 'salad', 'bun', 'tomato', 'steal', 'bun', 'burn', 'chicken'];
+const TUTORIAL_BOT_RIG = ['beef', 'salad', 'tomato', 'chicken', 'bun', 'bun'];
+// Attacks get animated on the clients; bots wait this much longer afterwards so nobody misses what happened.
+const FX_PAUSE = 2600;
 const TUTORIAL_BONUS_XP = 50;
 
 // Matchmaking: level range starts narrow and widens the longer someone waits.
@@ -140,7 +145,12 @@ function schedule(room) {
   if (!needsAutopilot(room)) return;
   room.timerActive = true;
   // The tutorial cook plays slower so there is time to read.
-  const delay = room.kind === 'tutorial' ? BOT_DELAY * 1.6 : BOT_DELAY;
+  let delay = room.kind === 'tutorial' ? BOT_DELAY * 1.6 : BOT_DELAY;
+  const last = room.state.log[room.state.log.length - 1];
+  if (last && last.fx && room.fxSeen !== last.n) {
+    room.fxSeen = last.n;
+    delay += FX_PAUSE;
+  }
   room.timer = setTimeout(() => {
     room.timerActive = false;
     const st = room.state;
@@ -389,7 +399,7 @@ async function handleApi(req, res, url) {
     const p = newPlayer(prof.name, false, prof);
     const room = newRoom('tutorial', [p, newPlayer(TUTORIAL_BOT, true, null, 1)]);
     room.tutorialBonus = !prof.tutorialDone; // the bonus is paid for the first finished tutorial only
-    startGame(room, { start: 0, rig: { 0: TUTORIAL_RIG.slice() }, gentle: [1] });
+    startGame(room, { start: 0, rig: { 0: TUTORIAL_RIG.slice(), 1: TUTORIAL_BOT_RIG.slice() }, gentle: [1] });
     return json(res, 200, { code: room.code, pid: p.pid, token: p.token });
   }
 
