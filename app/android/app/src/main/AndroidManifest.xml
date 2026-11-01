@@ -28,10 +28,10 @@
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- AdMob-App-ID. Noch Googles Test-ID – vor dem Start durch die echte ID der App "Smash Burger" ersetzen. -->
+        <!-- AdMob-App-ID der App "Smash Burger" -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713" />
+            android:value="ca-app-pub-2648510730204337~8346592908" />
     </application>
 
     <!-- Permissions -->

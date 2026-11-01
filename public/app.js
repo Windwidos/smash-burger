@@ -189,14 +189,16 @@
 
   // ---------- Werbung & Käufe (nur in der Android-App) ----------
   // Rewarded videos via @capacitor-community/admob, Google Play purchases via @capgo/native-purchases.
-  // ADS_TEST_MODE true = only Google test ads until the AdMob ad unit for Smash Burger exists.
+  // ADS_TEST_MODE true = only Google test ads. Own devices in TEST_DEVICES always get test ads
+  // (clicking real ads on your own phone can get the AdMob account banned). Same device list as Atomic Nerds.
 
   const Cap = window.Capacitor;
   const isNative = !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform());
   const AdMob = isNative && Cap.Plugins.AdMob;
   const Billing = isNative && Cap.Plugins.NativePurchases;
-  const ADS_TEST_MODE = true;
-  const REWARDED_ID = { test: 'ca-app-pub-3940256099942544/5224354917', live: '' };
+  const ADS_TEST_MODE = false;
+  const TEST_DEVICES = ['C1826DA99F63CA2DC8FAE78CDC606204']; // Galaxy Fold (JMD)
+  const REWARDED_ID = { test: 'ca-app-pub-3940256099942544/5224354917', live: 'ca-app-pub-2648510730204337/7019575506' };
   let adsReady = null;
   let adsNpa = false;
   const iapPrices = {};
@@ -205,7 +207,8 @@
     if (!AdMob) return Promise.resolve(false);
     adsReady = adsReady || (async () => {
       try {
-        await AdMob.initialize({ initializeForTesting: ADS_TEST_MODE, maxAdContentRating: 'Teen' });
+        // initializeForTesting only applies testingDevices to the listed phones; everybody else gets real ads.
+        await AdMob.initialize({ initializeForTesting: true, testingDevices: TEST_DEVICES, maxAdContentRating: 'Teen' });
       } catch (e) {
         console.warn('[ads] init', e);
         return false;
