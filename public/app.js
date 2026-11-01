@@ -506,7 +506,7 @@
 
   function renderShop() {
     const eq = (profile.equipped && profile.equipped.tray) || 'classic';
-    const adsLeft = S.ADS_PER_DAY - (profile.adsToday || 0);
+    const adsLeft = S.COIN_ADS_PER_DAY - (profile.coinAdsToday || 0);
     let body = '';
     if (shopTab === 'themes') {
       body = `<p class="note center">Jedes Pack bringt einen eigenen Hintergrund, neue Zutaten und 2 Spezial-Burger – und jede Runde eine andere Speisekarte. Wähle es beim Tisch-Eröffnen, alle am Tisch spielen mit.</p>
@@ -1001,7 +1001,7 @@
               ${levelUp ? `<div class="level-up">⭐ Level ${r.after.level} erreicht! <small>${esc(r.after.title)}</small></div>` : ''}
               <div class="coin-gain">+${r.coins} 🪙 Münzen${r.doubled ? ' <span class="pill ok">×2</span>' : ''}</div>
             </div>
-            ${!r.doubled && (isNative || (profile && profile.supporter)) ? `
+            ${!r.doubled && profile && (profile.supporter || (isNative && (profile.doublesToday || 0) < S.DOUBLES_PER_DAY)) ? `
               <button class="btn big double-btn" data-do="double">${profile && profile.supporter ? '⭐ Belohnung verdoppeln' : '▶️ Video ansehen: Belohnung ×2'}</button>` : ''}` : ''}
           ${buttons}
         </div>

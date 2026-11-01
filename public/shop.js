@@ -61,8 +61,10 @@
   function gameCoins(won, burgers) {
     return 10 + burgers * 5 + (won ? 15 : 0);
   }
-  const AD_COINS = 40;
-  const ADS_PER_DAY = 10;
+  // Rewarded videos: a small bonus on top of playing, not a replacement for it (or for buying coins).
+  const AD_COINS = 15;
+  const COIN_ADS_PER_DAY = 3; // "Video ansehen: +15 Münzen" im Shop
+  const DOUBLES_PER_DAY = 5; // "Belohnung ×2" nach einer Runde
 
   const itemId = {
     tray: id => 'tray:' + id,
@@ -93,7 +95,7 @@
   }
 
   return {
-    TRAYS, EMOTES, PACKS, IAP, AD_COINS, ADS_PER_DAY, gameCoins, itemId, trayById, packById, iapById,
+    TRAYS, EMOTES, PACKS, IAP, AD_COINS, COIN_ADS_PER_DAY, DOUBLES_PER_DAY, gameCoins, itemId, trayById, packById, iapById,
     ownsTray, ownsPack, ownedEmotes, themeItem, ownsTheme, themePacks,
   };
 });

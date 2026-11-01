@@ -156,12 +156,17 @@ function doubleResult(room, idx) {
   return r;
 }
 
-// Daily cap for rewarded videos; returns false when used up.
-function useAd(prof) {
+// Daily caps for rewarded videos, separately for shop coins and "Belohnung ×2"; returns false when used up.
+function useAd(prof, kind) {
   const day = Profiles.today();
-  if (prof.adDay !== day) { prof.adDay = day; prof.adCount = 0; }
-  if (prof.adCount >= Shop.ADS_PER_DAY) return false;
-  prof.adCount += 1;
+  if (prof.adDay !== day) { prof.adDay = day; prof.adCount = 0; prof.doubleCount = 0; }
+  if (kind === 'double') {
+    if (prof.doubleCount >= Shop.DOUBLES_PER_DAY) return false;
+    prof.doubleCount += 1;
+  } else {
+    if (prof.adCount >= Shop.COIN_ADS_PER_DAY) return false;
+    prof.adCount += 1;
+  }
   return true;
 }
 
@@ -319,7 +324,7 @@ function handleLobbyAction(room, idx, a) {
       const r = room.results && room.results[idx];
       if (!prof || !r) return 'Hier gibt es nichts zu verdoppeln.';
       if (r.doubled) return 'Schon verdoppelt.';
-      if (!prof.supporter && !useAd(prof)) return 'Für heute sind alle Videos aufgebraucht – morgen geht es weiter.';
+      if (!prof.supporter && !useAd(prof, 'double')) return `Du hast heute schon ${Shop.DOUBLES_PER_DAY}× verdoppelt – morgen geht es weiter.`;
       doubleResult(room, idx);
       Profiles.save(prof).catch(e => console.error('Profil speichern:', e.message));
       return null;
@@ -467,7 +472,7 @@ async function handleApi(req, res, url) {
       return reply();
     }
     if (url.pathname === '/api/ads/coins') {
-      if (!useAd(prof)) return json(res, 400, { error: 'Für heute sind alle Videos aufgebraucht – morgen geht es weiter.' });
+      if (!useAd(prof, 'coins')) return json(res, 400, { error: 'Für heute sind alle Gratis-Videos aufgebraucht – morgen geht es weiter.' });
       prof.coins += Shop.AD_COINS;
       await Profiles.save(prof);
       return reply();

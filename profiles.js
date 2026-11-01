@@ -16,7 +16,7 @@ function clean(row) {
     id: row.id, name: row.name, xp: row.xp, games: row.games, wins: row.wins,
     tutorialDone: row.tutorial_done, tokenHash: row.token_hash,
     coins: row.coins || 0, owned: row.owned || [], equipped: row.equipped || {},
-    supporter: !!row.supporter, adDay: row.ad_day || null, adCount: row.ad_count || 0,
+    supporter: !!row.supporter, adDay: row.ad_day || null, adCount: row.ad_count || 0, doubleCount: row.double_count || 0,
   };
 }
 
@@ -24,6 +24,7 @@ function toRow(p) {
   return {
     id: p.id, name: p.name, xp: p.xp, games: p.games, wins: p.wins, tutorial_done: p.tutorialDone, token_hash: p.tokenHash,
     coins: p.coins, owned: p.owned, equipped: p.equipped, supporter: p.supporter, ad_day: p.adDay, ad_count: p.adCount,
+    double_count: p.doubleCount,
   };
 }
 
@@ -123,7 +124,8 @@ function publicView(p) {
   return {
     id: p.id, name: p.name, xp: p.xp, games: p.games, wins: p.wins, tutorialDone: p.tutorialDone,
     coins: p.coins, owned: p.owned, equipped: p.equipped, supporter: p.supporter,
-    adsToday: p.adDay === today() ? p.adCount : 0,
+    coinAdsToday: p.adDay === today() ? p.adCount : 0,
+    doublesToday: p.adDay === today() ? p.doubleCount : 0,
   };
 }
 
