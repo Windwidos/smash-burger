@@ -73,6 +73,29 @@ const classic = E.newGame(['a', 'b'], 0, rngFrom(3));
 if (classic.theme !== null || classic.recipes.join() !== '0,1,2,3' || classic.deck.some(c => E.TYPES[c.t].theme)) throw new Error('Klassisches Spiel verändert');
 console.log('Themen-Partien:', themeWins);
 
+// Bot-Schwierigkeit: schwer gegen leicht muss klar gewinnen, leichte Bots greifen nie an
+{
+  let hardWins = 0, normalWins = 0;
+  for (let seed = 1; seed <= 200; seed++) {
+    const rng = rngFrom(seed * 13);
+    const hardFirst = seed % 2 === 0;
+    const skill = hardFirst ? { 0: 'hard', 1: 'easy' } : { 0: 'easy', 1: 'hard' };
+    const s = E.newGame(['A', 'B'], seed % 2, rng, { skill });
+    for (let k = 0; k < 5000 && s.winner == null; k++) {
+      const p = s.current;
+      const a = E.botStep(s, p, rng);
+      if (s.skill[p] === 'easy' && ['burn', 'steal', 'swap'].includes(a.type)) throw new Error('Leichter Bot greift an');
+      if (!E.act(s, p, a, rng).ok) throw new Error('Bot-Zug ungültig (Schwierigkeit)');
+    }
+    if (s.skill[s.winner] === 'hard') hardWins++;
+    const t = E.newGame(['A', 'B'], seed % 2, rng, { skill: { 0: 'normal', 1: 'easy' } });
+    for (let k = 0; k < 5000 && t.winner == null; k++) E.act(t, t.current, E.botStep(t, t.current, rng), rng);
+    if (t.winner === 0) normalWins++;
+  }
+  console.log(`Schwer gegen leicht: ${hardWins}/200 Siege, normal gegen leicht: ${normalWins}/200`);
+  if (hardWins < 140) throw new Error('Schwere Bots sind nicht stärker als leichte');
+}
+
 // Gezielte Regeltests
 const R4 = [0, 1, 2];
 const C = (t, id) => ({ id, t });

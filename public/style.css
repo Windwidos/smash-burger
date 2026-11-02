@@ -603,3 +603,55 @@ body[data-theme]:not([data-theme=""]) .ticker { background: rgba(255, 253, 248, 
 .unlock .swatch .stack { padding: 2px 3px; }
 .unlock .swatch .ico { width: 12px; height: 12px; }
 .unlock span { display: flex; flex-direction: column; }
+
+/* ---------- Ladebildschirm (Server wird geweckt) ---------- */
+.loader {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px;
+  background:
+    radial-gradient(900px 500px at 50% 0, #FFD9B5 0%, rgba(255, 217, 181, 0) 70%),
+    repeating-conic-gradient(rgba(214, 74, 55, .05) 0 25%, transparent 0 50%) 0 0 / 44px 44px, var(--bg);
+  transition: opacity .5s ease;
+}
+.loader.done { opacity: 0; }
+.loader-box { width: min(360px, 100%); text-align: center; }
+.loader-logo { position: relative; width: min(300px, 80vw); margin: 0 auto 22px; }
+.loader-logo img { display: block; width: 100%; height: auto; }
+.loader-logo .ghost { opacity: .22; filter: grayscale(1); }
+.loader-logo .fill {
+  position: absolute; inset: 0; clip-path: inset(100% 0 0 0);
+  filter: drop-shadow(0 8px 10px rgba(90, 40, 10, .25));
+  transition: clip-path 30s cubic-bezier(.12, .7, .3, 1);
+}
+.loader.run .loader-logo .fill { clip-path: inset(9% 0 0 0); }
+.loader.done .loader-logo .fill { clip-path: inset(0 0 0 0); transition-duration: .5s; }
+.loader-bar { height: 18px; border: 2.5px solid var(--ink); border-radius: 999px; background: #F3E2CF; overflow: hidden; box-shadow: 0 3px 0 var(--ink); }
+.loader-bar i {
+  display: block; height: 100%; width: 0; border-radius: 999px;
+  background: repeating-linear-gradient(-45deg, #F9A066 0 10px, var(--orange) 10px 20px);
+  background-size: 28px 100%; animation: barMove .8s linear infinite;
+  transition: width 30s cubic-bezier(.12, .7, .3, 1);
+}
+.loader.run .loader-bar i { width: 92%; }
+.loader.done .loader-bar i { width: 100%; transition-duration: .4s; }
+@keyframes barMove { to { background-position: 28px 0; } }
+.loader-line { font: 700 18px 'Fredoka', sans-serif; color: var(--orange-d); min-height: 48px; margin: 16px 0 6px; transition: opacity .3s, transform .3s; }
+.loader-line.out { opacity: 0; transform: translateY(-6px); }
+.loader small { color: var(--muted); }
+
+/* ---------- Schnelles Spiel: Auswahl ---------- */
+.mode-card {
+  display: block; width: 100%; text-align: left; margin-bottom: 12px; padding: 12px 14px;
+  border: 2.5px solid var(--ink); border-radius: 20px; box-shadow: 0 4px 0 var(--ink); background: var(--paper);
+}
+button.mode-card { display: flex; align-items: center; gap: 12px; background: linear-gradient(135deg, #FBA45E, var(--orange) 50%, #E2652B); color: #fff; }
+button.mode-card small { color: rgba(255, 255, 255, .92); }
+.mode-card b { display: block; font: 700 19px 'Fredoka', sans-serif; }
+.mode-card small { font-weight: 700; color: var(--muted); }
+.mode-card .mb-ico { flex: none; }
+.mode-card.bots { background: #F2FAF3; }
+.mode-card.bots .mb-ico { background: #DDF3E3; }
+.mc-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.seg button { flex: 1; min-width: 88px; border: 2px solid var(--ink); background: #fff; border-radius: 12px; padding: 8px 6px; font-weight: 800; font-size: 13.5px; }
+.seg button.on { background: var(--orange); color: #fff; box-shadow: 0 3px 0 var(--ink); }
+.mode-card.bots .btn.big { margin-top: 8px; }

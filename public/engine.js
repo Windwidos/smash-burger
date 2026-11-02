@@ -249,6 +249,7 @@
       logSeq: 0,
       rig: opts.rig || null,
       gentle: opts.gentle || [],
+      skill: opts.skill || null,
     };
     for (let k = 0; k < HAND_SIZE; k++) s.players.forEach((p, i) => p.hand.push(drawFor(s, i)));
     log(s, `${s.players[s.current].name} beginnt. Guten Appetit!`);
@@ -541,10 +542,16 @@
     });
   }
 
-  function botStep(s, p) {
+  // Bot difficulty per seat (s.skill[p]): 'easy' never attacks and plays sloppily, 'hard' hunts the leader.
+  function botStep(s, p, rng) {
+    rng = rng || Math.random;
     const me = s.players[p];
     const R = s.recipes;
     const n = s.players.length;
+    const skill = (s.skill && s.skill[p]) || 'normal';
+    const hard = skill === 'hard';
+    // How many burgers the strongest opponent has finished – hard bots aim their attacks at them.
+    const lead = q => (hard ? completedCount(s.players[q].tray, R) * 12 : 0);
 
     if (s.pending && s.pending.type === 'dig') {
       let best = null;
@@ -557,11 +564,17 @@
       return best.a;
     }
     if (s.played >= MAX_PLAYS || !me.hand.length) return { type: 'end' };
+    // Easy bots often stop after one card.
+    if (skill === 'easy' && s.played >= 1 && rng() < 0.5) return { type: 'end' };
 
     let best = null;
-    const consider = (sc, a) => { if (!best || sc > best.sc) best = { sc, a }; };
+    const options = [];
+    const consider = (sc, a) => {
+      options.push({ sc, a });
+      if (!best || sc > best.sc) best = { sc, a };
+    };
 
-    const gentle = s.gentle && s.gentle.includes(p);
+    const gentle = (s.gentle && s.gentle.includes(p)) || skill === 'easy';
     for (const c of me.hand) {
       const def = TYPES[c.t];
       if (def.kind === 'ing') {
@@ -573,7 +586,9 @@
           if (q === p) return;
           const threat = completedCount(o.tray, R) >= R.length - 1 ? 30 : 0;
           o.tray.forEach((st, i) => {
-            const sc = layersOf(st).length * 4 + (completeRecipe(st, R) >= 0 ? 25 : 0) + threat - 10;
+            const sc = hard
+              ? layersOf(st).length * 6 + (completeRecipe(st, R) >= 0 ? 30 : 0) + threat - 6 + lead(q)
+              : layersOf(st).length * 4 + (completeRecipe(st, R) >= 0 ? 25 : 0) + threat - 10;
             consider(sc, { type: 'burn', cardId: c.id, target: { player: q, stack: i } });
           });
         });
@@ -582,7 +597,7 @@
           if (q === p) return;
           o.tray.forEach((st, i) => {
             if (completeRecipe(st, R) >= 0 && trayValid(withAdded(me.tray, st, 'new'), R)) {
-              consider(70, { type: 'steal', cardId: c.id, mode: 'whole', from: { player: q, stack: i }, to: { player: p, stack: 'new' } });
+              consider(70 + lead(q), { type: 'steal', cardId: c.id, mode: 'whole', from: { player: q, stack: i }, to: { player: p, stack: 'new' } });
             }
             const top = st[st.length - 1];
             for (const tg of placeTargets(me.tray, [top], R)) {
@@ -602,13 +617,23 @@
         }
       }
     }
-    if (best && best.sc > 8) return best.a;
+    if (skill === 'easy' && options.length && rng() < 0.35) {
+      // Sloppy: some random sensible move instead of the best one.
+      const ok = options.filter(o => o.sc > 8);
+      if (ok.length) return ok[Math.floor(rng() * ok.length)].a;
+    }
+    if (best && best.sc > (hard ? 4 : 8)) return best.a;
 
     // A gentle (tutorial) bot throws its attack cards away instead of using them.
     const attack = gentle && me.hand.find(c => TYPES[c.t].kind === 'act' && c.t !== 'dig');
     if (attack) return { type: 'discard', cardId: attack.id };
     const useless = me.hand.filter(c => !useful(c, me.tray, R));
     if (useless.length) return { type: 'discard', cardId: useless[0].id };
+    if (hard) {
+      // Hard bots cycle the deck faster: any ingredient that can't go anywhere right now is thrown away.
+      const stuck = me.hand.filter(c => TYPES[c.t].kind === 'ing' && !placeTargets(me.tray, [c], R).length);
+      if (stuck.length) return { type: 'discard', cardId: stuck[0].id };
+    }
     if (s.played === 0) {
       const ings = me.hand.filter(c => TYPES[c.t].kind === 'ing');
       return { type: 'discard', cardId: (ings[0] || me.hand[0]).id };

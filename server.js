@@ -26,6 +26,8 @@ const FX_PAUSE = 2600;
 const EMOTE_SHOW_MS = 4000;
 const EMOTE_COOLDOWN_MS = 2500;
 const BOT_TRAYS = ['classic', 'wood', 'diner', 'mint', 'picnic'];
+const BOT_REWARD = { easy: 0.5, normal: 0.75, hard: 1 };
+const BOT_LEVEL_SHIFT = { easy: -2, normal: 0, hard: 3 };
 const TUTORIAL_BONUS_XP = 50;
 
 // Matchmaking: level range starts narrow and widens the longer someone waits.
@@ -119,14 +121,16 @@ function settle(room) {
     const prof = p.profile;
     const won = st.winner === i;
     const burgers = E.completedCount(st.players[i].tray, st.recipes);
-    let xp = E.gameXp(won, burgers, n);
+    // Bot games pay less (easy 50 %, normal 75 %, hard 100 %) so nobody levels up past real opponents on easy bots.
+    const factor = room.kind === 'bots' ? BOT_REWARD[room.skill] || 1 : 1;
+    let xp = Math.round(E.gameXp(won, burgers, n) * factor);
     let bonus = 0;
     if (room.kind === 'tutorial') {
       bonus = room.tutorialBonus ? TUTORIAL_BONUS_XP : 0;
       xp += bonus;
       prof.tutorialDone = true;
     }
-    const coins = Shop.gameCoins(won, burgers) + (bonus ? 50 : 0);
+    const coins = Math.round(Shop.gameCoins(won, burgers) * factor) + (bonus ? 50 : 0);
     const before = E.levelInfo(prof.xp);
     prof.xp += xp;
     prof.coins += coins;
@@ -534,6 +538,25 @@ async function handleApi(req, res, url) {
     const p = newPlayer(name, false, prof);
     room.players.push(p);
     broadcast(room);
+    return json(res, 200, { code: room.code, pid: p.pid, token: p.token });
+  }
+
+  // Quick game against bots: starts right away, difficulty and number of opponents chosen by the player.
+  if (url.pathname === '/api/bots') {
+    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    const skill = BOT_REWARD[body.skill] ? body.skill : 'normal';
+    const count = Math.min(3, Math.max(1, Number(body.opponents) || 2));
+    const theme = body.theme && E.THEMES[body.theme] && Shop.ownsTheme(prof, body.theme) ? body.theme : null;
+    const p = newPlayer(prof.name, false, prof);
+    const room = newRoom('bots', [p]);
+    room.skill = skill;
+    room.theme = theme;
+    const lv = Math.max(1, p.level + BOT_LEVEL_SHIFT[skill]);
+    for (let i = 0; i < count; i++) room.players.push(newBot(room, Math.max(1, lv + crypto.randomInt(-1, 2))));
+    const seats = {};
+    room.players.forEach((pl, i) => { if (pl.isBot) seats[i] = skill; });
+    startGame(room, { theme, skill: seats, start: 0 });
+    schedule(room);
     return json(res, 200, { code: room.code, pid: p.pid, token: p.token });
   }
 

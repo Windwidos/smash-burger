@@ -36,18 +36,79 @@
 
   // ---------- Netzwerk ----------
 
-  // The free server sleeps when idle; show a hint while the first request wakes it up.
+  // The free server sleeps when idle and needs ~20–40 s to wake up. Instead of a dry hint we show a loading
+  // screen: the logo fills up with colour, a bar runs and funny kitchen messages rotate (Sims-style).
+  // It only appears if the server doesn't answer within a moment.
+  const LOADING_LINES = [
+    'Grill wird vorgeheizt …', 'Patties werden gesmasht …', 'Brötchen werden aufgeschnitten …',
+    'Salat wird gewaschen. Gründlich.', 'Käse schmilzt vor Aufregung …', 'Koch Kalle sucht seinen Pfannenwender …',
+    'Bestellungen werden sortiert …', 'Tomaten werden auf Rundheit geprüft …', 'Ketchup-Flasche wird geschüttelt …',
+    'Bots üben ihr Pokerface …', 'Tabletts werden poliert …', 'Zwiebeln werden zum Weinen gebracht …',
+    'Gurken werden gesucht … ach nein, gibt\'s hier gar nicht.', 'Fritteuse wird freundlich überredet …',
+    'Sesamkörner werden einzeln gezählt …', 'Müll wird rausgebracht. Und gleich wieder durchwühlt …',
+    'Cheese-Patty übt seinen Auftritt …', 'Fast fertig. Wirklich. Ehrenwort.',
+  ];
+  const loaderEl = document.getElementById('loader');
   let serverAwake = false;
-  let wakeHintTimer = null;
+  let waking = null;
+  let loaderLineTimer = null;
+
+  function showLoader() {
+    if (!loaderEl.classList.contains('hidden')) return;
+    const lines = LOADING_LINES.slice().sort(() => Math.random() - 0.5);
+    let k = 0;
+    loaderEl.innerHTML = `
+      <div class="loader-box">
+        <div class="loader-logo">
+          <img class="ghost" src="img/logo.png" alt="">
+          <img class="fill" src="img/logo.png" alt="Smash Burger">
+        </div>
+        <div class="loader-bar"><i></i></div>
+        <p class="loader-line">${lines[0]}</p>
+        <small>Die Küche ist nach einer Pause kurz eingeschlafen – gleich geht's los!</small>
+      </div>`;
+    loaderEl.classList.remove('hidden', 'done');
+    requestAnimationFrame(() => requestAnimationFrame(() => loaderEl.classList.add('run')));
+    const lineEl = loaderEl.querySelector('.loader-line');
+    loaderLineTimer = setInterval(() => {
+      lineEl.classList.add('out');
+      setTimeout(() => {
+        k = (k + 1) % lines.length;
+        lineEl.textContent = lines[k];
+        lineEl.classList.remove('out');
+      }, 300);
+    }, 2600);
+  }
+
+  function hideLoader() {
+    clearInterval(loaderLineTimer);
+    if (loaderEl.classList.contains('hidden')) return;
+    loaderEl.classList.add('done'); // bar and logo jump to full
+    setTimeout(() => loaderEl.classList.add('hidden'), 650);
+    setTimeout(() => loaderEl.classList.remove('run', 'done'), 700);
+  }
+
   function wakeServer() {
-    wakeHintTimer = setTimeout(() => {
-      if (!serverAwake) toast('Server wird geweckt … das kann bis zu einer Minute dauern.', 60000);
-    }, 2500);
-    fetch(SERVER + '/api/health').then(() => {
+    if (waking) return waking;
+    const slow = setTimeout(showLoader, 700);
+    const attempt = () => fetch(SERVER + '/api/health', { cache: 'no-store' }).then(r => {
+      if (!r.ok) throw new Error('not ready');
+    });
+    waking = (async () => {
+      for (;;) {
+        try {
+          await attempt();
+          break;
+        } catch {
+          await new Promise(r => setTimeout(r, 2500));
+        }
+      }
       serverAwake = true;
-      clearTimeout(wakeHintTimer);
-      if (!toastEl.classList.contains('hidden') && toastEl.textContent.startsWith('Server wird')) toastEl.classList.add('hidden');
-    }).catch(() => setTimeout(wakeServer, 5000));
+      clearTimeout(slow);
+      hideLoader();
+      waking = null;
+    })();
+    return waking;
   }
 
   async function post(path, body) {
@@ -115,8 +176,12 @@
   setInterval(() => {
     if (session && es && Date.now() - lastMsg > 25000) connect();
   }, 5000);
+  let hiddenSince = 0;
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && session) connect();
+    if (document.visibilityState === 'hidden') { hiddenSince = Date.now(); return; }
+    // After a long break the server may have fallen asleep again.
+    if (hiddenSince && Date.now() - hiddenSince > 10 * 60000) wakeServer();
+    if (session) connect();
   });
   window.addEventListener('online', () => { if (session) connect(); });
 
@@ -336,6 +401,45 @@
   // ---------- Schnelles Spiel (Matchmaking) ----------
 
   let mmTimer = null;
+  // ---------- Schnelles Spiel: echte Spieler oder sofort gegen Bots ----------
+
+  const LS_BOTS = 'smashburger.bots';
+  let botCfg = { skill: 'normal', opponents: 2, theme: '' };
+  try { botCfg = { ...botCfg, ...JSON.parse(localStorage.getItem(LS_BOTS)) }; } catch { /* ignore */ }
+
+  const SKILLS = [
+    { id: 'easy', icon: '😊', name: 'Leicht', note: 'greift nie an · 50 % XP' },
+    { id: 'normal', icon: '🙂', name: 'Normal', note: '75 % XP' },
+    { id: 'hard', icon: '😈', name: 'Schwer', note: 'jagt den Führenden · 100 % XP' },
+  ];
+
+  function quickSheet() {
+    const themes = Object.entries(E.THEMES).filter(([id]) => S.ownsTheme(profile, id));
+    const seg = (key, items) => `<div class="seg">${items.map(it =>
+      `<button class="${String(botCfg[key]) === String(it.id) ? 'on' : ''}" data-do="botCfg" data-key="${key}" data-id="${it.id}">${it.label}</button>`).join('')}</div>`;
+    openSheet(`<h2>⚡ Schnelles Spiel</h2>
+      <button class="mode-card" data-do="quickReal">
+        <span class="mb-ico">👥</span><span><b>Echte Spieler</b><small>Gegner auf deinem Level · volle XP</small></span>
+      </button>
+      <div class="mode-card bots">
+        <div class="mc-head"><span class="mb-ico">🤖</span><span><b>Gegen Bots</b><small>Sofort los, ohne Warten</small></span></div>
+        <div class="tc-label">Schwierigkeit</div>
+        ${seg('skill', SKILLS.map(s => ({ id: s.id, label: `${s.icon} ${s.name}` })))}
+        <p class="note">${esc(SKILLS.find(s => s.id === botCfg.skill).note)}</p>
+        <div class="tc-label">Gegner</div>
+        ${seg('opponents', [1, 2, 3].map(n => ({ id: n, label: `${n} Bot${n > 1 ? 's' : ''}` })))}
+        ${themes.length ? `<div class="tc-label">Thema</div>
+          ${seg('theme', [{ id: '', label: '🍔 Klassisch' }].concat(themes.map(([id, t]) => ({ id, label: `${t.icon} ${esc(t.name)}` }))))}` : ''}
+        <button class="btn primary big" data-do="startBots">🤖 Los geht's!</button>
+      </div>`);
+  }
+
+  function startBots() {
+    localStorage.setItem(LS_BOTS, JSON.stringify(botCfg));
+    if (botCfg.theme && !S.ownsTheme(profile, botCfg.theme)) botCfg.theme = '';
+    return joinTable('/api/bots', { skill: botCfg.skill, opponents: botCfg.opponents, theme: botCfg.theme || null });
+  }
+
   async function startQuick() {
     try {
       mm = { status: await post('/api/quick/join', withProfile({})) };
@@ -669,7 +773,7 @@
           </div>` : ''}
         <div class="menu-buttons">
           <button class="mbtn quick" data-do="quick">
-            <span class="mb-ico">⚡</span><span class="mb-txt"><b>Schnelles Spiel</b><small>Gegner auf deinem Level</small></span>
+            <span class="mb-ico">⚡</span><span class="mb-txt"><b>Schnelles Spiel</b><small>Echte Spieler oder sofort gegen Bots</small></span>
           </button>
           <button class="mbtn friends" data-do="friends">
             <span class="mb-ico">👥</span><span class="mb-txt"><b>Mit Freunden</b><small>Eigenen Tisch eröffnen oder beitreten</small></span>
@@ -984,6 +1088,9 @@
       buttons = '<button class="btn primary big" data-do="home">Zum Hauptmenü</button>';
     } else if (view.kind === 'quick') {
       buttons = `<button class="btn primary big" data-do="again">⚡ Nächstes Spiel</button>
+        <button class="link" data-do="home">Hauptmenü</button>`;
+    } else if (view.kind === 'bots') {
+      buttons = `<button class="btn primary big" data-do="againBots">🤖 Nochmal gegen Bots</button>
         <button class="link" data-do="home">Hauptmenü</button>`;
     } else {
       buttons = `${view.host === me() ? '<button class="btn primary big" data-do="restart">Nochmal spielen</button>' : '<p class="wait">Warte auf den Gastgeber …</p>'}
@@ -1680,7 +1787,17 @@
       case 'join': return joinByCode(document.getElementById('code')?.value);
       case 'joinInvite': return joinByCode(roomParam());
       case 'friends': return friendsSheet();
-      case 'quick': return startQuick();
+      case 'quick': return quickSheet();
+      case 'quickReal':
+        closeSheet();
+        return startQuick();
+      case 'botCfg':
+        botCfg[d.key] = d.key === 'opponents' ? Number(d.id) : d.id;
+        return quickSheet();
+      case 'startBots': return startBots();
+      case 'againBots':
+        await leaveTable();
+        return startBots();
       case 'cancelQuick': return cancelQuick();
       case 'tutorial':
         tutStep = null;
