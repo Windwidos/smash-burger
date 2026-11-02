@@ -2,11 +2,13 @@
 const assert = require('assert');
 const E = require('../public/engine');
 
-const RIG = ['beef', 'cheese', 'salad', 'bun', 'tomato', 'steal', 'bun', 'burn', 'chicken'];
-const BOT_RIG = ['beef', 'salad', 'tomato', 'chicken', 'bun', 'bun'];
+// Same as TUTORIAL_RIG / TUTORIAL_BOT_RIG and the tutorial options in server.js.
+const RIG = ['beef', 'cheese', 'salad', 'bun', 'tomato', 'steal', 'bun', 'burn', 'chicken',
+  'saladTomato', 'dig', 'beefCheese', 'saladTomato', 'bun'];
+const BOT_RIG = ['beef', 'salad', 'tomato', 'chicken', 'bun', 'bun', 'cheese', 'tomato', 'cheese', 'tomato', 'cheese'];
 
 for (let run = 0; run < 200; run++) {
-  const s = E.newGame(['Du', 'Koch Kalle'], 0, Math.random, { rig: { 0: RIG.slice(), 1: BOT_RIG.slice() }, gentle: [1] });
+  const s = E.newGame(['Du', 'Koch Kalle'], 0, Math.random, { rig: { 0: RIG.slice(), 1: BOT_RIG.slice() }, gentle: [1], noDig: [1], slow: { 1: 6 } });
   const me = s.players[0], kalle = s.players[1];
   const card = t => { const c = me.hand.find(x => x.t === t); assert(c, `Karte ${t} fehlt, Hand: ${me.hand.map(x => x.t)}`); return c.id; };
   const ok = a => { const r = E.act(s, 0, a); assert(r.ok, `${JSON.stringify(a)}: ${r.error}`); };
@@ -36,5 +38,27 @@ for (let run = 0; run < 200; run++) {
   ok({ type: 'burn', cardId: card('burn'), target: { player: 1, stack: 0 } });
   assert(me.hand.some(c => c.t === 'chicken'));
   ok({ type: 'end' });
+  kalleTurn();
+  assert.strictEqual(E.completedCount(kalle.tray, s.recipes), 0, 'Kalle darf nicht aufholen');
+
+  // Zug 4: Kombi-Karte Salat + Tomate, Chicken-Patty drauf, Brötchen per Mülltaucher aus dem Müll.
+  ok({ type: 'place', cardId: card('saladTomato'), stack: 'new' });
+  const chickenStack = me.tray.findIndex(st => layers(st) === 'salad,tomato');
+  ok({ type: 'place', cardId: card('chicken'), stack: chickenStack });
+  ok({ type: 'dig', cardId: card('dig') });
+  assert(s.pending, 'Mülltaucher muss etwas finden');
+  const bun = s.trash.find(c => c.t === 'bun');
+  assert(bun, 'Im Müll muss ein Brötchen liegen');
+  ok({ type: 'digPick', cardId: bun.id, stack: chickenStack });
+  assert.strictEqual(E.completedCount(me.tray, s.recipes), 3);
+  kalleTurn();
+  assert(E.completedCount(kalle.tray, s.recipes) < 2, 'Kalle bleibt hinten');
+
+  // Zug 5: Deluxe Burger mit Cheese-Patty + Salat-Tomate + Brötchen → Sieg.
+  ok({ type: 'place', cardId: card('beefCheese'), stack: 'new' });
+  const deluxe = me.tray.findIndex(st => layers(st) === 'beef,cheese');
+  ok({ type: 'place', cardId: card('saladTomato'), stack: deluxe });
+  ok({ type: 'place', cardId: card('bun'), stack: deluxe });
+  assert.strictEqual(s.winner, 0, 'Du gewinnst die Übungsrunde');
 }
 console.log('Tutorial-Ablauf ok');

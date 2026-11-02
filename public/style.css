@@ -751,3 +751,14 @@ button.mode-card small { color: rgba(255, 255, 255, .92); }
 @keyframes arrowUp { 50% { transform: translateY(-8px); } }
 @keyframes arrowDown { 50% { transform: translateY(8px); } }
 .coach-hl { z-index: 37; }
+
+/* ---------- Tutorial: Fortschritt, Hinweis im Müll-Fenster ---------- */
+.coach-progress { height: 7px; border-radius: 999px; background: #F1E3D3; overflow: hidden; margin-top: 8px; }
+.coach-progress i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #FBA45E, var(--orange)); transition: width .4s ease; }
+.coach-foot { justify-content: space-between; }
+.coach-foot .btn, .coach-todo { margin-left: auto; }
+.coach-todo { font-weight: 800; font-size: 13px; color: var(--orange-d); animation: dot 1.4s ease-in-out infinite; }
+.sheet-coach { display: flex; align-items: center; gap: 10px; background: #FFF4E4; border: 2px solid var(--gold); border-radius: 14px; padding: 6px 10px; margin: 6px 0 12px; }
+.sheet-coach img { height: 64px; }
+.sheet-coach p { margin: 0; font-weight: 700; }
+.gcard.tut-pick { border: 3px solid var(--gold); box-shadow: 0 0 0 4px rgba(245, 184, 41, .4); animation: pulse 1.1s ease-in-out infinite; }

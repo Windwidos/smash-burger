@@ -1512,10 +1512,59 @@
     ], () => kalles('salad,tomato,chicken,bun') < 0 || !myTurn()),
     { chef: 'point', target: '[data-do="end"]', when: () => myTurn(), done: () => !myTurn(), cards: [], buttons: ['end'],
       text: 'Bleibt das <b>Chicken-Patty</b>. Es passt gerade nirgends hin, weil der Chicken Burger mit Salat und Tomate anfängt. Behalte es für später! Du musst nicht alle 3 Karten spielen: Tippe auf <b>„Zug beenden“</b>.' },
-    { chef: 'point', next: true, text: 'Noch ein Tipp: Karten, die du nicht brauchst, wirfst du mit <b>🗑️ Abwerfen</b> weg. Tippe dazu die Karte an. Aber Achtung: <b>Aussetzen gilt nicht</b>, mindestens 1 Karte pro Zug musst du spielen.' },
-    { chef: 'point', next: true, text: 'Zwei Aktionskarten fehlen noch: <b>🗑️ Mülltaucher</b> holt eine Zutat aus dem Müll zurück, und bei <b>🔄 Falscher Tisch</b> wandern alle Tabletts eine Person weiter. Mit zwei gleichen Karten (👯 <b>Paar</b>) ziehst du jemandem blind eine Karte.' },
-    { chef: 'thumbs', next: true, text: 'Jetzt kennst du alles! Dir fehlen noch der <b>Chicken</b> und der <b>Deluxe Burger</b>. Ab jetzt spielst du frei. Schlag mich, wenn du kannst! 😄' },
+    { chef: 'point', target: '.trash', next: true, text: 'Siehst du oben den <b>Müll</b>? Da liegt jetzt mein verbrannter Burger, und auch meine Karten, die ich <b>abgeworfen</b> habe. Merk dir das, gleich brauchst du ihn!' },
+    { chef: 'point', next: true, text: 'Kleiner Tipp: Karten, die du nicht brauchst, wirfst du mit <b>🗑️ Abwerfen</b> weg. Tippe dazu die Karte an und dann auf „Abwerfen“. Aber Achtung: <b>Aussetzen gilt nicht</b>, mindestens 1 Karte pro Zug musst du spielen.' },
+    // ---- Zug 4: Kombi-Karte, Chicken-Patty, Mülltaucher ----
+    { chef: 'wave', target: '.hand', next: true, when: () => myTurn(), skip: () => myTurn() && myDone() >= 3,
+      text: 'Du bist dran! Deine neuen Karten: <b>„Salat + Tomate“</b> ist eine <b>Kombi-Karte</b>, da sind zwei Zutaten drauf. Und der <b>🗑️ Mülltaucher</b> holt dir eine Zutat aus dem Müll zurück.' },
+    placeStep('saladTomato', () => 'new',
+      'Für den <b>Chicken Burger</b> brauchst du Salat, Tomate, Chicken-Patty und Brötchen. Tippe auf <b>„Salat + Tomate“</b>.',
+      'Tippe auf <b>„Neuer Burger“</b>. Beide Zutaten landen auf einmal auf dem Stapel, das spart dir eine Karte!',
+      () => mine('salad,tomato') >= 0 || mine('salad,tomato,chicken') >= 0 || myDone() >= 3),
+    placeStep('chicken', () => mine('salad,tomato'),
+      'Jetzt passt endlich dein <b>Chicken-Patty</b>! Tippe darauf.',
+      'Leg es auf deinen Stapel mit <b>Salat und Tomate</b>.',
+      () => mine('salad,tomato,chicken') >= 0 || myDone() >= 3),
+    digStep(),
+    { chef: 'cheer', target: '.menu-strip', next: true,
+      text: 'Der Mülltaucher-Trick! 😎 Das Brötchen kam aus dem Burger, den du mir verbrannt hast. Dein <b>Chicken Burger</b> ist fertig, jetzt fehlt nur noch der <b>Deluxe</b>.' },
+    { chef: 'point', next: true, text: 'Zwei Sachen noch, während ich spiele: Bei <b>🔄 Falscher Tisch</b> wandern <b>alle Tabletts</b> eine Person weiter, super, wenn jemand vorne liegt! Und hast du <b>zwei gleiche Karten</b> (👯 Paar), darfst du beide abwerfen und jemandem blind eine Karte klauen.' },
+    // ---- Zug 5: Deluxe Burger mit zwei Kombi-Karten → Sieg ----
+    { chef: 'point', target: '.menu-strip', next: true, when: () => myTurn(),
+      text: 'Dein letzter Burger: der <b>Deluxe</b> mit Patty, Käse, Salat, Tomate und Brötchen. Das sind <b>5 Zutaten</b>, aber du hast nur 3 Karten … mit Kombi-Karten geht das in einem Zug!' },
+    placeStep('beefCheese', () => 'new',
+      'Das <b>Cheese-Patty</b> ist Patty und Käse in einer Karte. Tippe darauf.',
+      'Tippe auf <b>„Neuer Burger“</b>.',
+      () => mine('beef,cheese') >= 0 || mine('beef,cheese,salad,tomato') >= 0),
+    placeStep('saladTomato', () => mine('beef,cheese'),
+      'Jetzt <b>„Salat + Tomate“</b>. Tippe darauf.',
+      'Leg sie auf dein <b>Cheese-Patty</b>.',
+      () => mine('beef,cheese,salad,tomato') >= 0),
+    placeStep('bun', () => mine('beef,cheese,salad,tomato'),
+      'Und zum Schluss das <b>Brötchen</b>, damit sind alle 4 Burger fertig. Tippe darauf!',
+      'Leg es auf deinen Deluxe Burger und <b>gewinne</b>! 🏆',
+      () => game().winner != null),
   ];
+
+  // Mülltaucher in four moves: card → "Ausspielen" → pick the bun in the trash window → tap the burger.
+  function digStep() {
+    const stack = () => mine('salad,tomato,chicken');
+    const stage = () => (game().pending ? (ui.mode === 'digPick' ? 3 : 2) : selType() === 'dig' ? 1 : 0);
+    const texts = [
+      'Jetzt der Trick: Dir fehlt das <b>Brötchen</b>. Im Müll liegt eins! Tippe auf den <b>🗑️ Mülltaucher</b>.',
+      'Tippe auf <b>„Ausspielen“</b>.',
+      'Such dir im Müll das <b>Brötchen</b> aus.',
+      'Leg das Brötchen auf deinen Stapel mit <b>Salat, Tomate und Chicken-Patty</b>.',
+    ];
+    return {
+      when: () => myTurn(), done: () => myDone() >= 3, skip: () => myTurn() && !handHasType('dig') && !game().pending,
+      cards: ['dig'], buttons: ['play', 'cancel'],
+      spots: k => k === `${me()}:${stack()}`,
+      target: () => ['.hand .card[data-t="dig"]', '[data-do="play"]', '', stackSel(me(), stack())][stage()],
+      text: () => texts[stage()],
+      digHint: () => texts[2],
+    };
+  }
 
   // The step currently shown (and therefore steering what may be tapped), or null.
   function tutActive() {
@@ -1613,10 +1662,10 @@
       <img src="img/chef-${step.chef || 'point'}.png" alt="Koch Kalle">
       <div class="coach-bubble">
         <div class="coach-text">${typeof step.text === 'function' ? step.text() : step.text}</div>
+        <div class="coach-progress" title="Schritt ${tutStep + 1} von ${TUT.length}"><i style="width:${Math.round((tutStep + 1) / TUT.length * 100)}%"></i></div>
         <div class="coach-foot">
-          <span class="coach-count">${tutStep + 1}/${TUT.length}</span>
-          ${step.next ? '<button class="btn primary small" data-do="coachNext">Weiter</button>' : ''}
-          <button class="link small-link" data-do="coachSkip">Tutorial beenden</button>
+          <button class="link small-link" data-do="coachSkip">Überspringen</button>
+          ${step.next ? '<button class="btn primary small" data-do="coachNext">Weiter</button>' : '<span class="coach-todo">👆 Du bist dran</span>'}
         </div>
       </div>`;
     placeCoach(target);
@@ -1680,9 +1729,13 @@
     const g = game();
     const opts = new Set(E.digOptions({ trash: g.trash, players: g.players.map(p => ({ tray: p.tray })), recipes: g.recipes }, me()).map(c => c.id));
     const list = g.trash.slice().reverse().filter(c => opts.has(c.id));
+    // In the tutorial Kalle explains inside the window and points at the bun.
+    const tut = tutActive();
+    const hint = tut && tut.digHint ? tut.digHint() : '';
     openSheet(`<h2>🗑️ Mülltaucher</h2>
-      <p class="note">Nimm dir eine Zutat – du musst sie sofort auf dein Tablett legen.</p>
-      <div class="card-grid">${list.map(c => `<button class="gcard ing pick" data-do="digPick" data-id="${c.id}">${A.cardArt(c.t, 28)}<span>${esc(T[c.t].name)}</span></button>`).join('')}</div>`, 'lock');
+      ${hint ? `<div class="sheet-coach"><img src="img/chef-point.png" alt=""><p>${hint}</p></div>`
+        : '<p class="note">Nimm dir eine Zutat – du musst sie sofort auf dein Tablett legen.</p>'}
+      <div class="card-grid">${list.map(c => `<button class="gcard ing pick ${hint && c.t === 'bun' ? 'tut-pick' : ''}" data-do="digPick" data-id="${c.id}">${A.cardArt(c.t, 28)}<span>${esc(T[c.t].name)}</span></button>`).join('')}</div>`, 'lock');
   }
 
   function logSheet() {
@@ -2054,6 +2107,7 @@
         tutStep++;
         return render();
       case 'coachSkip':
+        if (!confirm('Erklärungen überspringen? Du spielst die Runde dann ohne Kalles Hilfe weiter.')) return;
         tutStep = TUT.length;
         return render();
       case 'editName': return nameSheet();

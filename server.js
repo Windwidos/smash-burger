@@ -19,8 +19,11 @@ const TUTORIAL_BOT = 'Koch Kalle';
 // Tutorial: the learner gets a hand that teaches the basics, then the first draws.
 // Hands for the scripted tutorial (deal + first draws). The coach steps in public/app.js rely on exactly this order:
 // you build a Cheeseburger, steal Kalle's patty, then burn his Chicken Burger.
-const TUTORIAL_RIG = ['beef', 'cheese', 'salad', 'bun', 'tomato', 'steal', 'bun', 'burn', 'chicken'];
-const TUTORIAL_BOT_RIG = ['beef', 'salad', 'tomato', 'chicken', 'bun', 'bun'];
+// Turn 4: combo card + Chicken-Patty + Mülltaucher (bun back from the trash). Turn 5: Deluxe with two combo cards → you win.
+const TUTORIAL_RIG = ['beef', 'cheese', 'salad', 'bun', 'tomato', 'steal', 'bun', 'burn', 'chicken',
+  'saladTomato', 'dig', 'beefCheese', 'saladTomato', 'bun'];
+// Kalle: his first two turns are scripted, afterwards only harmless cards (and one card per turn, see startGame).
+const TUTORIAL_BOT_RIG = ['beef', 'salad', 'tomato', 'chicken', 'bun', 'bun', 'cheese', 'tomato', 'cheese', 'tomato', 'cheese'];
 // Attacks get animated on the clients; bots wait this much longer afterwards so nobody misses what happened.
 const FX_PAUSE = 2600;
 const TURN_PAUSE = 1300;
@@ -571,7 +574,7 @@ async function handleApi(req, res, url) {
     const p = newPlayer(prof.name, false, prof);
     const room = newRoom('tutorial', [p, newPlayer(TUTORIAL_BOT, true, null, 1)]);
     room.tutorialBonus = !prof.tutorialDone; // the bonus is paid for the first finished tutorial only
-    startGame(room, { start: 0, rig: { 0: TUTORIAL_RIG.slice(), 1: TUTORIAL_BOT_RIG.slice() }, gentle: [1] });
+    startGame(room, { start: 0, rig: { 0: TUTORIAL_RIG.slice(), 1: TUTORIAL_BOT_RIG.slice() }, gentle: [1], noDig: [1], slow: { 1: 6 } });
     return json(res, 200, { code: room.code, pid: p.pid, token: p.token });
   }
 

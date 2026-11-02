@@ -250,6 +250,10 @@
       rig: opts.rig || null,
       gentle: opts.gentle || [],
       skill: opts.skill || null,
+      // { seat: fromTurn } – from that turn on the bot plays only one card per turn (tutorial: Kalle lets you win).
+      slow: opts.slow || null,
+      // Seats that never use the Mülltaucher (tutorial: the bun in the trash is meant for you).
+      noDig: opts.noDig || [],
     };
     for (let k = 0; k < HAND_SIZE; k++) s.players.forEach((p, i) => p.hand.push(drawFor(s, i)));
     log(s, `${s.players[s.current].name} beginnt. Guten Appetit!`);
@@ -566,6 +570,8 @@
     if (s.played >= MAX_PLAYS || !me.hand.length) return { type: 'end' };
     // Easy bots often stop after one card.
     if (skill === 'easy' && s.played >= 1 && rng() < 0.5) return { type: 'end' };
+    if (s.slow && s.slow[p] && s.turn >= s.slow[p] && s.played >= 1) return { type: 'end' };
+    const noDig = s.noDig && s.noDig.includes(p);
 
     let best = null;
     const options = [];
@@ -579,7 +585,7 @@
       const def = TYPES[c.t];
       if (def.kind === 'ing') {
         for (const tg of placeTargets(me.tray, [c], R)) consider(placeScore(me.tray, [c], tg, R), { type: 'place', cardId: c.id, stack: tg });
-      } else if (gentle && c.t !== 'dig') {
+      } else if ((gentle && c.t !== 'dig') || (noDig && c.t === 'dig')) {
         continue;
       } else if (c.t === 'burn') {
         s.players.forEach((o, q) => {
@@ -625,7 +631,7 @@
     if (best && best.sc > (hard ? 4 : 8)) return best.a;
 
     // A gentle (tutorial) bot throws its attack cards away instead of using them.
-    const attack = gentle && me.hand.find(c => TYPES[c.t].kind === 'act' && c.t !== 'dig');
+    const attack = (gentle || noDig) && me.hand.find(c => TYPES[c.t].kind === 'act' && (c.t !== 'dig' ? gentle : noDig));
     if (attack) return { type: 'discard', cardId: attack.id };
     const useless = me.hand.filter(c => !useful(c, me.tray, R));
     if (useless.length) return { type: 'discard', cardId: useless[0].id };
