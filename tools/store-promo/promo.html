@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="fonts.css">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1080px; height: 1920px; overflow: hidden; font-family: 'Nunito', sans-serif; }
+  .slide {
+    position: relative; width: 1080px; height: 1920px; overflow: hidden;
+    background:
+      radial-gradient(900px 700px at 50% 0%, #FFB37A 0%, rgba(255, 179, 122, 0) 70%),
+      repeating-conic-gradient(rgba(255, 255, 255, .07) 0 25%, transparent 0 50%) 0 0 / 90px 90px,
+      linear-gradient(170deg, #F79A5A 0%, #EE7B3A 55%, #D9592A 100%);
+  }
+  .cap { position: absolute; top: 70px; left: 60px; right: 60px; text-align: center; color: #fff; }
+  .cap h1 {
+    font: 700 84px/1.02 'Fredoka', sans-serif; letter-spacing: .5px;
+    -webkit-text-stroke: 9px #2B2220; paint-order: stroke fill; text-shadow: 0 8px 0 rgba(43, 34, 32, .35);
+  }
+  .cap p { margin-top: 22px; font: 800 38px/1.25 'Nunito', sans-serif; color: #FFF3E2; text-shadow: 0 3px 0 rgba(43, 34, 32, .3); }
+  .phone {
+    position: absolute; left: 50%; top: 400px; transform: translateX(-50%) rotate(var(--rot, 0deg));
+    width: 700px; padding: 22px; border-radius: 76px; background: #2B2220;
+    box-shadow: 0 30px 60px rgba(60, 20, 0, .45), inset 0 0 0 4px #4A3A35;
+  }
+  .phone img.shot { display: block; width: 100%; border-radius: 56px; }
+  .phone::before { content: ''; position: absolute; top: 40px; left: 50%; width: 22px; height: 22px; margin-left: -11px; border-radius: 50%; background: #111; z-index: 2; }
+  .deco { position: absolute; width: 190px; filter: drop-shadow(0 12px 10px rgba(0, 0, 0, .3)); }
+  .badge {
+    position: absolute; padding: 14px 26px; border-radius: 999px; background: #FFE58A; border: 6px solid #2B2220;
+    font: 700 40px 'Fredoka', sans-serif; color: #2B2220; box-shadow: 0 8px 0 #2B2220; transform: rotate(-6deg);
+  }
+  /* Vorstellungsgrafik 1024x500 */
+  .feature { width: 1024px; height: 500px; position: relative; overflow: hidden;
+    background:
+      radial-gradient(600px 400px at 30% 40%, #FFB37A 0%, rgba(255, 179, 122, 0) 70%),
+      repeating-conic-gradient(rgba(255, 255, 255, .07) 0 25%, transparent 0 50%) 0 0 / 60px 60px,
+      linear-gradient(160deg, #F79A5A, #E2652B);
+  }
+  .feature .logo { position: absolute; left: 40px; top: 26px; height: 330px; filter: drop-shadow(0 12px 12px rgba(0, 0, 0, .3)); }
+  .feature .chef { position: absolute; right: 30px; bottom: -10px; height: 470px; filter: drop-shadow(0 12px 12px rgba(0, 0, 0, .3)); }
+  .feature .tag { position: absolute; left: 50px; bottom: 34px; font: 700 44px 'Fredoka', sans-serif; color: #fff;
+    -webkit-text-stroke: 6px #2B2220; paint-order: stroke fill; }
+  .feature .ings { position: absolute; left: 560px; top: 60px; display: flex; flex-direction: column; gap: 14px; }
+  .feature .ings img { width: 70px; filter: drop-shadow(0 6px 4px rgba(0, 0, 0, .3)); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+  const SLIDES = {
+    1: { h: 'Bau Burger.<br>Smash die Konkurrenz!', p: 'Das Online-Kartenspiel für 2–6 Freunde', shot: '1-home', deco: [['burn', 40, 1500, -12], ['steal', 860, 1480, 10]] },
+    2: { h: 'Bau alle Burger<br>deiner Bestellung', p: 'Leuchtende Felder zeigen dir, wo deine Karte hinpasst', shot: '2-game', deco: [['beef', 30, 1560, -8], ['bun', 880, 1590, 12]] },
+    3: { h: 'Klauen, Anbrennen,<br>Chaos stiften!', p: 'Mit Aktionskarten ärgerst du die Konkurrenz', shot: '3-steal', rot: '-2deg', deco: [['steal', 20, 1450, -15], ['burn', 870, 1500, 14]] },
+    4: { h: '5 Themen-Packs', p: 'Neue Zutaten, Spezial-Burger und eigener Look – jede Runde eine neue Speisekarte', shot: '4-theme', deco: [['pumpkin', 30, 1520, -10], ['monstersauce', 870, 1560, 10]] },
+    5: { h: 'Tabletts & Emotes<br>freischalten', p: 'Münzen verdienst du in jeder Runde', shot: '5-shop', deco: [['pineapple', 30, 1560, -10], ['jalapeno', 880, 1540, 12]] },
+    6: { h: 'Koch Kalle<br>erklärt dir alles', p: 'Lerne das Spiel Schritt für Schritt in einer Übungsrunde', shot: '6-tutorial', chef: 'chef-wave' },
+    7: { h: 'Freunde, Spieler<br>oder Bots', p: 'Schnelles Spiel mit Gegnern auf deinem Level – oder sofort gegen Bots', shot: '7-quick', deco: [['salad', 30, 1560, -10], ['tomato', 880, 1560, 12]] },
+    8: { h: 'Steig auf bis zur<br>Burger-Legende', p: 'Sammle XP, steig im Level auf und schalte Belohnungen frei', shot: '8-win', chef: 'chef-cheer' },
+  };
+  const q = new URLSearchParams(location.search);
+  const root = document.getElementById('root');
+  if (q.get('feature')) {
+    document.body.style.width = '1024px'; document.body.style.height = '500px';
+    root.innerHTML = `<div class="feature">
+      <img class="logo" src="img/logo.png">
+      <div class="ings">${['beef', 'cheese', 'salad', 'tomato'].map(i => `<img src="img/${i}.png">`).join('')}</div>
+      <img class="chef" src="img/chef-cheer.png">
+      <div class="tag">Das Burger-Kartenspiel für Freunde!</div>
+    </div>`;
+  } else {
+    const s = SLIDES[q.get('n') || 1];
+    root.innerHTML = `<div class="slide">
+      <div class="cap"><h1>${s.h}</h1><p>${s.p}</p></div>
+      <div class="phone" style="--rot:${s.rot || '0deg'}"><img class="shot" src="_shots/${s.shot}.png"></div>
+      ${(s.deco || []).map(([img, x, y, r]) => `<img class="deco" src="img/${img}.png" style="left:${x}px;top:${y}px;transform:rotate(${r}deg)">`).join('')}
+      ${s.chef ? `<img class="deco" src="img/${s.chef}.png" style="width:300px;left:-10px;top:1460px">` : ''}
+    </div>`;
+  }
+</script>
+</body>
+</html>

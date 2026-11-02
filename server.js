@@ -31,6 +31,27 @@ const EMOTE_SHOW_MS = 4000;
 const EMOTE_COOLDOWN_MS = 2500;
 const BOT_TRAYS = ['classic', 'wood', 'diner', 'mint', 'picnic'];
 const BOT_REWARD = { easy: 0.5, normal: 0.75, hard: 1 };
+// Prepared positions for store screenshots (/api/demo, local only).
+const DEMO_SCENES = {
+  classic: {
+    theme: null, bots: ['Mia', 'Tom'], botLevels: [11, 8], botTrays: ['neon', 'diner'],
+    hand: ['beef', 'bun', 'steal'],
+    trays: [
+      [['beef', 'cheese', 'bun'], ['salad', 'tomato']],
+      [['beef', 'cheese'], ['salad']],
+      [['salad', 'tomato', 'chicken', 'bun'], ['beef']],
+    ],
+  },
+  halloween: {
+    theme: 'halloween', bots: ['Mia', 'Tom'], botLevels: [11, 8], botTrays: ['space', 'picnic'],
+    hand: ['cheese', 'bun', 'burn'],
+    trays: [
+      [['chicken', 'pumpkin', 'salad', 'bun'], ['beef', 'monstersauce']],
+      [['beef', 'cheese', 'bun'], ['chicken']],
+      [['beef', 'monstersauce', 'cheese']],
+    ],
+  },
+};
 const BOT_LEVEL_SHIFT = { easy: -2, normal: 0, hard: 3 };
 const TUTORIAL_BONUS_XP = 50;
 
@@ -547,6 +568,34 @@ async function handleApi(req, res, url) {
     const p = newPlayer(name, false, prof);
     room.players.push(p);
     broadcast(room);
+    return json(res, 200, { code: room.code, pid: p.pid, token: p.token });
+  }
+
+  // Store screenshots only (SMASH_DEMO=1 on a local machine, never on Render): a game in a prepared position.
+  if (url.pathname === '/api/demo' && process.env.SMASH_DEMO === '1') {
+    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    const scene = DEMO_SCENES[body.scene] || DEMO_SCENES.classic;
+    const p = newPlayer(prof.name, false, prof);
+    const room = newRoom('bots', [p]);
+    room.skill = 'easy';
+    scene.bots.forEach((b, i) => {
+      const bot = newBot(room, scene.botLevels[i]);
+      bot.name = b;
+      bot.botTray = scene.botTrays[i];
+      room.players.push(bot);
+    });
+    startGame(room, { theme: scene.theme, start: 0, skill: { 1: 'easy', 2: 'easy' } });
+    const st = room.state;
+    const take = t => {
+      const i = st.deck.findIndex(c => c.t === t);
+      return st.deck.splice(i, 1)[0];
+    };
+    st.players.forEach((pl, i) => { st.deck.push(...pl.hand); pl.hand = []; });
+    st.players[0].hand = scene.hand.map(take);
+    st.players.forEach((pl, i) => {
+      pl.tray = (scene.trays[i] || []).map(stack => stack.map(take));
+      if (i > 0) pl.hand = ['tomato', 'salad', 'cheese'].map(take);
+    });
     return json(res, 200, { code: room.code, pid: p.pid, token: p.token });
   }
 
