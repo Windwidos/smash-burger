@@ -732,3 +732,22 @@ button.mode-card small { color: rgba(255, 255, 255, .92); }
 .move-chip.done { background: #FFF3C4; }
 @keyframes moveChip { 0% { transform: translateY(14px) scale(.6); opacity: 0; } 12% { transform: translateY(0) scale(1.05); opacity: 1; } 20% { transform: none; } 80% { opacity: 1; } 100% { transform: translateY(-14px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .turn-banner, .move-chip, .card.deal-in, .turn-strip.mine, .opp.active { animation-duration: .01s; } }
+
+/* ---------- Tutorial: Scheinwerfer + Pfeil, Kalle direkt am erklärten Bereich ---------- */
+.coach.anchored { bottom: auto; }
+.coach-spot {
+  position: fixed; z-index: 36; pointer-events: none; border-radius: 18px;
+  box-shadow: 0 0 0 200vmax rgba(35, 22, 15, .55);
+  outline: 3px solid var(--gold); outline-offset: 0;
+  animation: spotPulse 1.4s ease-in-out infinite; transition: left .25s, top .25s, width .25s, height .25s;
+}
+@keyframes spotPulse { 50% { outline-color: #fff; outline-width: 5px; } }
+.coach-arrow {
+  position: fixed; z-index: 41; font-size: 34px; line-height: 1; pointer-events: none;
+  filter: drop-shadow(0 3px 2px rgba(0, 0, 0, .4));
+}
+.coach-arrow.up { animation: arrowUp .8s ease-in-out infinite; }
+.coach-arrow.down { animation: arrowDown .8s ease-in-out infinite; }
+@keyframes arrowUp { 50% { transform: translateY(-8px); } }
+@keyframes arrowDown { 50% { transform: translateY(8px); } }
+.coach-hl { z-index: 37; }

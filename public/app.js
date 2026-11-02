@@ -1547,10 +1547,58 @@
     return true;
   }
 
+  // Spotlight (everything else dimmed) and a bouncing arrow make clear what Kalle is talking about.
+  const spotEl = document.createElement('div');
+  spotEl.className = 'coach-spot hidden';
+  const arrowEl = document.createElement('div');
+  arrowEl.className = 'coach-arrow hidden';
+  document.body.append(spotEl, arrowEl);
+
   function hideCoach() {
     coachEl.classList.add('hidden');
     coachEl.innerHTML = '';
+    spotEl.classList.add('hidden');
+    arrowEl.classList.add('hidden');
   }
+
+  // Bubble right next to the highlighted area (below it if the area is in the upper half, else above).
+  function placeCoach(target) {
+    coachEl.style.top = coachEl.style.bottom = '';
+    if (!target) {
+      coachEl.className = 'coach mid';
+      spotEl.classList.add('hidden');
+      arrowEl.classList.add('hidden');
+      return;
+    }
+    const r = target.getBoundingClientRect();
+    const vh = window.innerHeight;
+    const pad = 6;
+    Object.assign(spotEl.style, {
+      left: `${r.left - pad}px`, top: `${r.top - pad}px`, width: `${r.width + pad * 2}px`, height: `${r.height + pad * 2}px`,
+    });
+    spotEl.classList.remove('hidden');
+    coachEl.className = 'coach anchored';
+    const h = coachEl.offsetHeight;
+    const gap = 48; // room for the arrow
+    const below = r.top + r.height / 2 < vh / 2;
+    let top = below ? r.bottom + gap : r.top - gap - h;
+    top = Math.max(6, Math.min(vh - h - 6, top));
+    coachEl.style.top = `${top}px`;
+    const arrowTop = below ? r.bottom + 6 : r.top - 42;
+    Object.assign(arrowEl.style, { left: `${Math.max(16, Math.min(window.innerWidth - 56, r.left + r.width / 2 - 20))}px`, top: `${arrowTop}px` });
+    arrowEl.textContent = below ? '👆' : '👇';
+    arrowEl.className = `coach-arrow ${below ? 'up' : 'down'}`;
+  }
+
+  let coachRaf = 0;
+  window.addEventListener('scroll', () => {
+    if (coachEl.classList.contains('hidden')) return;
+    cancelAnimationFrame(coachRaf);
+    coachRaf = requestAnimationFrame(() => {
+      const sel = coachEl.dataset.target;
+      placeCoach(sel ? app.querySelector(sel) : null);
+    });
+  }, { passive: true });
 
   function renderCoach() {
     document.querySelectorAll('.coach-hl').forEach(el => el.classList.remove('coach-hl'));
@@ -1559,9 +1607,8 @@
     const sel = typeof step.target === 'function' ? step.target() : step.target;
     const target = sel && app.querySelector(sel);
     if (target) target.classList.add('coach-hl');
-    // Keep the bubble away from what it points at; without a target it sits in the middle.
-    const pos = !target ? 'mid' : target.getBoundingClientRect().top > window.innerHeight * 0.5 ? 'top' : 'bottom';
-    coachEl.className = `coach ${pos}`;
+    coachEl.dataset.target = target ? sel : '';
+    coachEl.className = 'coach anchored';
     coachEl.innerHTML = `
       <img src="img/chef-${step.chef || 'point'}.png" alt="Koch Kalle">
       <div class="coach-bubble">
@@ -1572,6 +1619,7 @@
           <button class="link small-link" data-do="coachSkip">Tutorial beenden</button>
         </div>
       </div>`;
+    placeCoach(target);
   }
 
   // ---------- Sheets ----------
