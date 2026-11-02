@@ -204,7 +204,7 @@
       else setTimeout(loadProfile, 4000); // server still waking up
     }
     profileLoading = false;
-    if (!session) render();
+    if (!session && !joining) render();
   }
 
   async function createProfile() {
@@ -240,15 +240,22 @@
     return false;
   }
 
+  // While a table is being joined, background refreshes must not redraw the main menu (no flicker).
+  let joining = false;
   async function joinTable(path, body) {
+    joining = true;
     try {
       const r = await post(path, withProfile(body || {}));
       saveSession(r);
       closeSheet();
       history.replaceState(null, '', '?room=' + r.code);
       connect();
+      render(); // "Tisch wird gedeckt" until the first table state arrives
     } catch (e) {
       if (!handleMissing(e)) toast(e.message);
+      render();
+    } finally {
+      joining = false;
     }
   }
 
@@ -391,6 +398,7 @@
   }
 
   function celebrate(text) {
+    Snd.play('coin');
     const el = document.createElement('div');
     el.className = 'celebrate';
     el.textContent = text;
@@ -431,7 +439,7 @@
         ${themes.length ? `<div class="tc-label">Thema</div>
           ${seg('theme', [{ id: '', label: '🍔 Klassisch' }].concat(themes.map(([id, t]) => ({ id, label: `${t.icon} ${esc(t.name)}` }))))}` : ''}
         <button class="btn primary big" data-do="startBots">🤖 Los geht's!</button>
-      </div>`);
+      </div>`, 'info', 'quick');
   }
 
   function startBots() {
@@ -477,7 +485,8 @@
     render();
   }
 
-  function leaveTable() {
+  // nextGame: going straight into another game – show "table is being set" instead of the main menu meanwhile.
+  function leaveTable(nextGame) {
     const done = post('/api/action', { ...session, action: { type: 'leave' } }).catch(() => {});
     if (es) es.close();
     es = null;
@@ -487,7 +496,8 @@
     closeSheet();
     hideCoach();
     history.replaceState(null, '', '/');
-    render();
+    if (nextGame) renderJoining();
+    else render();
     return done.then(loadProfile);
   }
 
@@ -582,6 +592,12 @@
     // Themed tables get the pack's background (lobby and game).
     const theme = session && view ? (game() ? game().theme : view.theme) : null;
     if ((document.body.dataset.theme || '') !== (theme || '')) document.body.dataset.theme = theme || '';
+    // Joined a table but its first state hasn't arrived yet: show a short "table is being set" screen
+    // instead of flashing the main menu.
+    if (session && !view) {
+      hideCoach();
+      return renderJoining();
+    }
     if (session && view) {
       tutAdvance();
       if (view.phase === 'lobby') renderLobby();
@@ -721,6 +737,10 @@
       <a class="link small" href="${esc(privacyUrl().replace('datenschutz', 'impressum'))}" target="_blank" rel="noopener">Impressum</a>
     </div>`;
 
+  function renderJoining() {
+    app.innerHTML = `<div class="home joining"><img class="chef-big bob" src="img/chef-wave.png" alt=""><h2>Tisch wird gedeckt …</h2><div class="mm-dots"><i></i><i></i><i></i></div></div>`;
+  }
+
   function renderLoading() {
     app.innerHTML = `<div class="home"><img class="logo-img" src="img/logo.png" alt="Smash Burger"><p class="wait">Küche wird vorgeheizt …</p></div>`;
   }
@@ -786,6 +806,7 @@
           <button class="link" data-do="rules">📖 Regeln</button>
           ${profile.tutorialDone ? '<button class="link" data-do="tutorial">🎓 Tutorial</button>' : ''}
           <button class="link" data-do="levels">🏅 Level</button>
+          <button class="link" data-do="audio">${Snd.music || Snd.sfx ? '🔊' : '🔇'} Ton</button>
         </div>
         ${legalLinks()}
       </div>`;
@@ -913,13 +934,26 @@
     return `<div class="mc ${d.kind}" title="${esc(d.name)}">${A.cardArt(c.t, size)}</div>`;
   }
 
+  // Ids of cards that were on a tray when the table was last drawn (for the pop-in animation).
+  let trayCardsSeen = new Set();
+  let trayCardsCode = null;
+  function rememberTrayCards() {
+    const g = game();
+    if (!g) return;
+    trayCardsSeen = new Set(g.players.flatMap(p => p.tray.flat().map(c => c.id)));
+    trayCardsCode = view.code;
+  }
+
   function trayHTML(p, pi, size, tg) {
     const g = game(), R = recipesOf(g);
     const stacks = p.tray.map((st, si) => {
       const done = E.completeRecipe(st, R) >= 0;
       const key = `${pi}:${si}`;
-      return `<div class="stack ${done ? 'done' : ''} ${tg.has(key) ? 'target' : ''}" data-do="stack" data-p="${pi}" data-s="${si}">
-        <div class="stack-cards">${st.map(c => miniCard(c, size)).join('')}</div>
+      // Cards that weren't on any tray in the last drawing pop in; a burger that just got finished flashes once.
+      const fresh = st.filter(c => !trayCardsSeen.has(c.id)).map(c => c.id);
+      const justDone = done && fresh.length > 0;
+      return `<div class="stack ${done ? 'done' : ''} ${justDone ? 'just-done' : ''} ${tg.has(key) ? 'target' : ''}" data-do="stack" data-p="${pi}" data-s="${si}">
+        <div class="stack-cards">${st.map(c => fresh.includes(c.id) ? miniCard(c, size).replace('class="mc ', 'class="mc pop-in ') : miniCard(c, size)).join('')}</div>
         <div class="stack-label">${esc(stackLabel(st, R))}</div>
       </div>`;
     });
@@ -998,6 +1032,7 @@
     const g = game();
     const R = recipesOf(g);
     const tg = targets();
+    if (trayCardsCode !== view.code) rememberTrayCards(); // entering a table: nothing pops in
     const mine = g.players[me()];
     const others = g.players.map((p, i) => ({ p, i })).filter(x => x.i !== me());
     // Order opponents in seating order starting after me.
@@ -1044,6 +1079,7 @@
       </div>`;
     animateResult();
     showEmotes();
+    rememberTrayCards();
     if (g.log.length) lastLogN = Math.max(lastLogN, g.log[g.log.length - 1].n);
   }
 
@@ -1075,6 +1111,7 @@
       el.style.left = `${Math.min(window.innerWidth - 170, Math.max(8, r.left + 12))}px`;
       el.style.top = `${Math.max(8, r.top + 4)}px`;
       document.body.appendChild(el);
+      Snd.play('emote');
       setTimeout(() => el.remove(), 3200);
     }
   }
@@ -1514,14 +1551,26 @@
 
   // ---------- Sheets ----------
 
-  function openSheet(html, kind) {
+  // key: when the same sheet is already open (e.g. picking options in it), only its content is swapped –
+  // no slide-in animation and the scroll position stays, so nothing jumps.
+  function openSheet(html, kind, key) {
+    const inner = `${(kind || 'info') === 'lock' ? '' : '<button class="sheet-x" data-do="closeSheet">✕</button>'}${html}`;
+    const card = sheet.querySelector('.sheet-card');
+    if (key && card && sheet.dataset.key === key && !sheet.classList.contains('hidden')) {
+      const top = card.scrollTop;
+      card.innerHTML = inner;
+      card.scrollTop = top;
+      return;
+    }
     sheetKind = kind || 'info';
+    sheet.dataset.key = key || '';
     sheet.innerHTML = `<div class="sheet-bg" data-do="${sheetKind === 'lock' ? 'noop' : 'closeSheet'}"></div>
-      <div class="sheet-card">${sheetKind === 'lock' ? '' : '<button class="sheet-x" data-do="closeSheet">✕</button>'}${html}</div>`;
+      <div class="sheet-card">${inner}</div>`;
     sheet.classList.remove('hidden');
   }
 
   function closeSheet() {
+    sheet.dataset.key = '';
     sheetKind = null;
     sheet.classList.add('hidden');
     sheet.innerHTML = '';
@@ -1568,9 +1617,18 @@
     openSheet(`<h2>Was ist passiert?</h2><ol class="log">${g.log.slice().reverse().map(l => `<li>${esc(l.text)}</li>`).join('')}</ol>`);
   }
 
+  function audioSheet() {
+    openSheet(`<h2>🔊 Ton</h2>
+      <div class="col">
+        <button class="toggle ${Snd.music ? 'on' : ''}" data-do="toggleMusic"><span>🎵 Musik</span><i></i></button>
+        <button class="toggle ${Snd.sfx ? 'on' : ''}" data-do="toggleSfx"><span>🔔 Soundeffekte</span><i></i></button>
+      </div>`, 'info', 'audio');
+  }
+
   function moreSheet() {
     openSheet(`<h2>Tisch ${esc(view.code)}</h2>
       <div class="col">
+        <button class="btn" data-do="audio">🔊 Musik & Sounds</button>
         <button class="btn" data-do="rules">📖 Spielregeln</button>
         <button class="btn" data-do="log">📜 Spielverlauf</button>
         <button class="btn" data-do="share">🔗 Tisch-Link teilen</button>
@@ -1615,6 +1673,39 @@
 
   // ---------- Zustand ----------
 
+  // ---------- Sounds zu Spielereignissen ----------
+  // Every new log entry gets one short sound; at the end of a game a fanfare (or a friendly "oh").
+  const Snd = window.SmashSound;
+  let soundSeen = { code: null, n: 0, won: false };
+
+  function gameSounds() {
+    const g = game();
+    if (!g) return;
+    if (soundSeen.code !== view.code) {
+      soundSeen = { code: view.code, n: g.log.length ? g.log[g.log.length - 1].n : 0, won: g.winner != null };
+      return;
+    }
+    const fresh = g.log.filter(l => l.n > soundSeen.n);
+    if (fresh.length) soundSeen.n = fresh[fresh.length - 1].n;
+    // Several things at once (bots are fast): play only the most important one.
+    const pick = l => {
+      const k = l.fx && l.fx.k;
+      if (k === 'burn' || k === 'steal' || k === 'swap' || k === 'dig') return k;
+      if (k === 'pair') return 'steal';
+      if (/✅|fertig/.test(l.text)) return 'complete';
+      if (/in den Müll/.test(l.text)) return 'discard';
+      if (/legt/.test(l.text)) return 'place';
+      return null;
+    };
+    const rank = ['place', 'discard', 'dig', 'swap', 'steal', 'burn', 'complete'];
+    const best = fresh.map(pick).filter(Boolean).sort((a, b) => rank.indexOf(b) - rank.indexOf(a))[0];
+    if (best && g.winner == null) Snd.play(best);
+    if (g.winner != null && !soundSeen.won) {
+      soundSeen.won = true;
+      setTimeout(() => Snd.play(g.winner === me() ? 'win' : 'lose'), 300);
+    }
+  }
+
   function onView() {
     const g = game();
     if (!g || !myTurn()) {
@@ -1629,8 +1720,10 @@
     if (mt && !wasMyTurn) {
       if (navigator.vibrate) navigator.vibrate(60);
       document.title = '🍳 Du bist dran! – Smash Burger';
+      Snd.play('turn');
     } else if (!mt) document.title = 'Smash Burger';
     wasMyTurn = mt;
+    gameSounds();
     if (view.phase === 'game') history.replaceState(null, '', '?room=' + view.code);
     const snap = snapshot();
     render();
@@ -1781,6 +1874,8 @@
     if (!el) return;
     const d = el.dataset;
     if (['end', 'discard', 'play', 'pair', 'cancel'].includes(d.do) && tutBlocks('button', d.do)) return;
+    if (d.do === 'card') Snd.play('select');
+    else if (el.matches('.btn, .mbtn, .tbtn, .seg button, .mode-card, .tabs button, .theme-chip, .emote-btn')) Snd.play('click');
     switch (d.do) {
       case 'onboard': return createProfile();
       case 'create': return joinTable('/api/create');
@@ -1796,7 +1891,7 @@
         return quickSheet();
       case 'startBots': return startBots();
       case 'againBots':
-        await leaveTable();
+        leaveTable(true);
         return startBots();
       case 'cancelQuick': return cancelQuick();
       case 'tutorial':
@@ -1815,6 +1910,14 @@
       case 'saveName': return saveName();
       case 'deleteProfile': return deleteProfile();
       case 'levels': return levelsSheet();
+      case 'audio': return audioSheet();
+      case 'toggleMusic':
+        Snd.setMusic(!Snd.music);
+        return audioSheet();
+      case 'toggleSfx':
+        Snd.setSfx(!Snd.sfx);
+        if (Snd.sfx) Snd.play('select');
+        return audioSheet();
       case 'setTheme': return send({ type: 'setTheme', theme: d.id || null });
       case 'themeShop':
         // Locked pack in the lobby: leave the table view for the shop, the table stays open.
@@ -1847,7 +1950,7 @@
       case 'double': return doubleReward();
       case 'home': return leaveTable();
       case 'again':
-        await leaveTable();
+        leaveTable(true);
         return startQuick();
       case 'rules': return rulesSheet();
       case 'menu': return menuSheet();
