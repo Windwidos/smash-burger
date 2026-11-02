@@ -240,8 +240,8 @@ input:focus { border-color: var(--orange); }
 .act-ico { line-height: 1; display: inline-block; }
 
 .ticker {
-  background: rgba(255, 253, 248, .75); border: 0; border-radius: 12px; text-align: left; padding: 4px 10px; font-size: 13px;
-  color: var(--muted); min-height: 40px;
+  background: var(--paper); border: 2px solid var(--line); border-radius: 12px; text-align: left; padding: 4px 10px; font-size: 13px;
+  color: #6E5A4F; min-height: 40px;
 }
 .ticker div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ticker div:first-child { color: var(--ink); font-weight: 700; }
@@ -296,7 +296,11 @@ input:focus { border-color: var(--orange); }
 .mytray .stack-label { font-size: 12px; }
 .mytray .empty-tray { color: rgba(255, 255, 255, .8); font-size: 13px; }
 
-.hint { min-height: 76px; display: flex; flex-direction: column; gap: 8px; padding: 2px 4px; margin-top: auto; }
+/* Solid paper background: the text stays readable on the checkered table and under the tutorial dimming. */
+.hint {
+  min-height: 76px; display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; margin-top: auto;
+  background: var(--paper); border: 2px solid var(--line); border-radius: 16px;
+}
 .hint-text { font-size: 14.5px; }
 .hint .sub { font-size: 13px; color: var(--muted); }
 

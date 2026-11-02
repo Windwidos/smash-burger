@@ -1309,7 +1309,8 @@
   }
 
   function banner(title, line, route, bad) {
-    addFx('fx-dim');
+    // In the tutorial the dimming would also grey out Kalle's speech bubble, so the banner shows without it.
+    if (!tutActive()) addFx('fx-dim');
     addFx(`fx-banner ${bad ? 'bad' : ''}`, null,
       `<div class="fx-title">${title}</div><div class="fx-line">${esc(line)}</div>${route ? `<div class="fx-route">${esc(route)}</div>` : ''}`);
   }
@@ -1877,18 +1878,21 @@
     return () => {
       if (wasMine) {
         // My turn just ended (often automatically after the 3rd card): say so before the next player starts.
-        banner('Zug vorbei!', 'Du ziehst auf 3 Karten nach', 'done');
-        setTimeout(() => banner(`${nextName} ist dran`, '', 'other'), 1300);
+        turnBanner('Zug vorbei!', 'Du ziehst auf 3 Karten nach', 'done');
+        setTimeout(() => turnBanner(`${nextName} ist dran`, '', 'other'), 1300);
       } else if (mineNow) {
-        banner('Du bist dran!', 'Spiele 1 bis 3 Karten', 'mine');
+        turnBanner('Du bist dran!', 'Spiele 1 bis 3 Karten', 'mine');
       } else {
-        banner(`${nextName} ist dran`, '', 'other');
+        turnBanner(`${nextName} ist dran`, '', 'other');
       }
     };
   }
 
+  // Not called banner(): that name belongs to the attack banners (playFx) and a second declaration would replace it.
   let bannerTimer = null;
-  function banner(title, sub, kind) {
+  function turnBanner(title, sub, kind) {
+    // In the tutorial Kalle already explains whose turn it is; the banner would only cover his speech bubble.
+    if (view.kind === 'tutorial' && kind !== 'mine' && tutActive()) return;
     document.querySelectorAll('.turn-banner').forEach(el => el.remove());
     clearTimeout(bannerTimer);
     const el = document.createElement('div');
