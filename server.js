@@ -23,6 +23,7 @@ const TUTORIAL_RIG = ['beef', 'cheese', 'salad', 'bun', 'tomato', 'steal', 'bun'
 const TUTORIAL_BOT_RIG = ['beef', 'salad', 'tomato', 'chicken', 'bun', 'bun'];
 // Attacks get animated on the clients; bots wait this much longer afterwards so nobody misses what happened.
 const FX_PAUSE = 2600;
+const TURN_PAUSE = 1300;
 const EMOTE_SHOW_MS = 4000;
 const EMOTE_COOLDOWN_MS = 2500;
 const BOT_TRAYS = ['classic', 'wood', 'diner', 'mint', 'picnic'];
@@ -203,6 +204,11 @@ function schedule(room) {
   if (last && last.fx && room.fxSeen !== last.n) {
     room.fxSeen = last.n;
     delay += FX_PAUSE;
+  }
+  // A new turn just started: wait a little so everyone sees the "X ist dran" banner first.
+  if (room.turnSeen !== room.state.turn) {
+    room.turnSeen = room.state.turn;
+    delay += TURN_PAUSE;
   }
   room.timer = setTimeout(() => {
     room.timerActive = false;

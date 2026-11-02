@@ -672,3 +672,63 @@ button.mode-card small { color: rgba(255, 255, 255, .92); }
 .toggle.on i { background: var(--green); }
 .toggle.on i::after { left: 22px; }
 .joining { padding-top: 70px; }
+
+/* ---------- Zugwechsel: Leiste, Banner, Hand, Gegner-Züge ---------- */
+.turn-strip {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 16px;
+  border: 2.5px solid var(--ink); font-size: 15px; box-shadow: 0 3px 0 var(--ink);
+}
+.turn-strip b { font: 700 17px 'Fredoka', sans-serif; }
+.turn-strip .ts-icon { font-size: 20px; }
+.turn-strip .ts-sub { font-weight: 700; font-size: 12.5px; opacity: .85; }
+.turn-strip .slots { margin-left: auto; display: flex; gap: 4px; }
+.turn-strip .slots i { width: 14px; height: 19px; border-radius: 4px; border: 2px solid currentColor; opacity: .9; }
+.turn-strip .slots i.used { background: currentColor; }
+.turn-strip.mine { background: linear-gradient(90deg, #FBA45E, var(--orange), #FBA45E); background-size: 200% 100%; color: #fff; animation: stripGlow 2.2s ease-in-out infinite; }
+.turn-strip.mine b { text-shadow: 0 2px 0 rgba(0, 0, 0, .2); }
+@keyframes stripGlow { 0%, 100% { background-position: 0 0; box-shadow: 0 3px 0 var(--ink), 0 0 0 0 rgba(240, 138, 75, .5); } 50% { background-position: 100% 0; box-shadow: 0 3px 0 var(--ink), 0 0 0 6px rgba(240, 138, 75, 0); } }
+.turn-strip.other { background: #EFE4D8; color: var(--ink); }
+.turn-strip.other .slots { color: var(--muted); }
+.think { display: inline-flex; gap: 3px; margin-left: 4px; }
+.think i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); animation: dot 1.2s infinite; }
+.think i:nth-child(2) { animation-delay: .2s; }
+.think i:nth-child(3) { animation-delay: .4s; }
+
+.opp.active { animation: oppTurn 1.4s ease-in-out infinite; }
+@keyframes oppTurn { 0%, 100% { box-shadow: 0 3px 0 var(--ink), 0 0 0 3px rgba(240, 138, 75, .5); } 50% { box-shadow: 0 3px 0 var(--ink), 0 0 0 7px rgba(240, 138, 75, .2); } }
+
+.hand { transition: opacity .3s, filter .3s, transform .3s; }
+.hand.waiting { opacity: .55; filter: grayscale(.45); transform: translateY(6px); }
+.hand.my-turn .card { box-shadow: 0 5px 0 var(--ink), inset 0 0 0 4px #FFE2C7, 0 0 14px rgba(240, 138, 75, .45); }
+.card.deal-in { animation: dealIn .55s cubic-bezier(.2, 1.3, .4, 1) both; }
+@keyframes dealIn { 0% { transform: translate(-40vw, -50vh) rotate(-30deg) scale(.4); opacity: 0; } 70% { opacity: 1; } 100% { transform: none; } }
+
+.turn-banner {
+  position: fixed; left: 50%; top: 38%; z-index: 60; transform: translate(-50%, -50%); pointer-events: none;
+  display: flex; align-items: center; gap: 10px; padding: 14px 24px; border: 3px solid var(--ink); border-radius: 22px;
+  box-shadow: 0 6px 0 var(--ink); white-space: nowrap; animation: bannerIn 1.5s cubic-bezier(.2, 1.3, .4, 1) forwards;
+}
+.turn-banner b { display: block; font: 700 26px 'Fredoka', sans-serif; }
+.turn-banner small { display: block; font-weight: 800; font-size: 13px; opacity: .9; }
+.turn-banner.mine { background: linear-gradient(135deg, #FBA45E, var(--orange) 50%, #E2652B); color: #fff; animation-duration: 1.9s; }
+.turn-banner.mine b { font-size: 32px; text-shadow: 0 2px 0 rgba(0, 0, 0, .25); }
+.turn-banner.mine img { height: 74px; margin: -24px 0 -14px -10px; }
+.turn-banner.other { background: var(--paper); color: var(--ink); }
+.turn-banner.done { background: #E9F7EC; color: var(--ink); }
+@keyframes bannerIn {
+  0% { transform: translate(-50%, -50%) scale(.3); opacity: 0; }
+  14% { transform: translate(-50%, -50%) scale(1.08); opacity: 1; }
+  22% { transform: translate(-50%, -50%) scale(1); }
+  82% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -80%) scale(.9); opacity: 0; }
+}
+
+.move-chip {
+  position: fixed; z-index: 44; pointer-events: none; display: flex; align-items: center; gap: 6px;
+  background: #fff; border: 2px solid var(--ink); border-radius: 999px; padding: 3px 10px 3px 4px;
+  font-size: 12.5px; box-shadow: 0 3px 0 var(--ink); animation: moveChip 2.3s ease forwards;
+}
+.move-chip.trash { background: #F3ECE4; }
+.move-chip.done { background: #FFF3C4; }
+@keyframes moveChip { 0% { transform: translateY(14px) scale(.6); opacity: 0; } 12% { transform: translateY(0) scale(1.05); opacity: 1; } 20% { transform: none; } 80% { opacity: 1; } 100% { transform: translateY(-14px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .turn-banner, .move-chip, .card.deal-in, .turn-strip.mine, .opp.active { animation-duration: .01s; } }

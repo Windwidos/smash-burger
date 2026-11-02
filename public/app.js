@@ -965,11 +965,34 @@
     return `<div class="tray skin-${esc(skin)}" data-tray="${pi}">${stacks.join('')}</div>`;
   }
 
-  function handCard(c) {
+  // Cards that just came into the hand fly in (after drawing at the end of a turn or stealing one).
+  let handSeen = { code: null, ids: new Set() };
+  function newHandIds() {
+    const ids = myHand().map(c => c.id);
+    if (handSeen.code !== view.code) handSeen = { code: view.code, ids: new Set(ids) };
+    const fresh = ids.filter(id => !handSeen.ids.has(id));
+    handSeen.ids = new Set(ids);
+    return fresh;
+  }
+
+  // Always visible: who is playing right now, and for me how many of my 3 cards are used.
+  function turnStripHTML(g) {
+    if (g.winner != null) return '';
+    if (myTurn()) {
+      const slots = [0, 1, 2].map(i => `<i class="${i < g.played ? 'used' : ''}"></i>`).join('');
+      return `<div class="turn-strip mine"><span class="ts-icon">🍳</span><b>Du bist dran!</b><span class="ts-sub">${3 - g.played > 0 ? `noch ${3 - g.played} Karte${3 - g.played > 1 ? 'n' : ''}` : 'fertig'}</span><span class="slots">${slots}</span></div>`;
+    }
+    const cur = g.players[g.current];
+    return `<div class="turn-strip other"><span class="ts-icon">⏳</span><b>${esc(cur.name)}</b>&nbsp;ist dran<span class="think"><i></i><i></i><i></i></span>
+      <span class="slots">${[0, 1, 2].map(i => `<i class="${i < g.played ? 'used' : ''}"></i>`).join('')}</span></div>`;
+  }
+
+  function handCard(c, deal) {
     const d = T[c.t];
     const sel = ui.sel === c.id;
     const twin = myTurn() && twinOf(c);
-    return `<button class="card ${d.kind} ${sel ? 'sel' : ''}" data-do="card" data-id="${c.id}" data-t="${c.t}">
+    const k = deal ? deal.indexOf(c.id) : -1;
+    return `<button class="card ${d.kind} ${sel ? 'sel' : ''} ${k >= 0 ? 'deal-in' : ''}" ${k >= 0 ? `style="animation-delay:${k * 0.12}s"` : ''} data-do="card" data-id="${c.id}" data-t="${c.t}">
       <span class="corner">${twin ? '👯' : ''}</span>
       <span class="art">${A.cardArt(c.t, d.kind === 'act' ? 66 : [0, 66, 46, 34, 28, 24][d.layers.length])}</span>
       <span class="cname">${esc(d.name)}</span>
@@ -1051,6 +1074,8 @@
           <button class="tbtn" data-do="more">⋯</button>
         </header>
 
+        ${turnStripHTML(g)}
+
         <section class="opponents">
           ${others.map(({ p, i }) => `
             <div class="opp ${g.current === i ? 'active' : ''} ${view.players[i] && !view.players[i].connected ? 'offline' : ''}" data-player="${i}">
@@ -1073,7 +1098,7 @@
 
         <section class="hint">${hintHTML()}</section>
 
-        <section class="hand">${myHand().map(handCard).join('') || '<div class="empty-hand">Keine Karten auf der Hand</div>'}</section>
+        <section class="hand ${myTurn() ? 'my-turn' : 'waiting'}">${(() => { const deal = newHandIds(); return myHand().map(c => handCard(c, deal)).join(''); })() || '<div class="empty-hand">Keine Karten auf der Hand</div>'}</section>
 
         ${g.winner != null ? resultHTML(g) : ''}
       </div>`;
@@ -1726,9 +1751,86 @@
     gameSounds();
     if (view.phase === 'game') history.replaceState(null, '', '?room=' + view.code);
     const snap = snapshot();
+    const turnChange = turnEvents();
     render();
     const fx = freshFx();
     if (fx.length) playFx(fx[fx.length - 1], snap);
+    showOpponentMoves();
+    if (turnChange) turnChange();
+  }
+
+  // ---------- Zugwechsel sichtbar machen ----------
+
+  let turnSeen = { code: null, turn: 0, current: -1, hand: 0 };
+
+  // Returns a function that shows the right banner(s) after the table is drawn.
+  function turnEvents() {
+    const g = game();
+    if (!g) return null;
+    const prev = turnSeen;
+    turnSeen = { code: view.code, turn: g.turn, current: g.current, hand: myHand().length };
+    if (prev.code !== view.code || g.winner != null || prev.turn === g.turn) return null;
+    const mineNow = g.current === me();
+    const wasMine = prev.current === me();
+    const nextName = g.players[g.current].name;
+    return () => {
+      if (wasMine) {
+        // My turn just ended (often automatically after the 3rd card): say so before the next player starts.
+        banner('Zug vorbei!', 'Du ziehst auf 3 Karten nach', 'done');
+        setTimeout(() => banner(`${nextName} ist dran`, '', 'other'), 1300);
+      } else if (mineNow) {
+        banner('Du bist dran!', 'Spiele 1 bis 3 Karten', 'mine');
+      } else {
+        banner(`${nextName} ist dran`, '', 'other');
+      }
+    };
+  }
+
+  let bannerTimer = null;
+  function banner(title, sub, kind) {
+    document.querySelectorAll('.turn-banner').forEach(el => el.remove());
+    clearTimeout(bannerTimer);
+    const el = document.createElement('div');
+    el.className = `turn-banner ${kind}`;
+    el.innerHTML = `${kind === 'mine' ? '<img src="img/chef-point.png" alt="">' : ''}<div><b>${esc(title)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
+    document.body.appendChild(el);
+    bannerTimer = setTimeout(() => el.remove(), kind === 'mine' ? 1900 : 1500);
+  }
+
+  // What opponents (and bots) just played appears briefly above their panel: "🍅 Tomate gelegt".
+  let movesSeen = { code: null, n: 0 };
+  const typeByName = name => Object.keys(T).find(t => T[t].name === name);
+
+  function showOpponentMoves() {
+    const g = game();
+    if (!g) return;
+    const last = g.log.length ? g.log[g.log.length - 1].n : 0;
+    if (movesSeen.code !== view.code) { movesSeen = { code: view.code, n: last }; return; }
+    const fresh = g.log.filter(l => l.n > movesSeen.n && !l.fx);
+    movesSeen.n = last;
+    fresh.forEach((l, k) => {
+      let m, verb, cls = '';
+      if ((m = l.text.match(/^(.+?) legt (.+?)( als neuen Burger)?\.$/))) verb = 'gelegt';
+      else if ((m = l.text.match(/^(.+?) wirft (.+?) in den Müll\.$/))) { verb = 'weggeworfen'; cls = 'trash'; }
+      else if ((m = l.text.match(/^✅ (.+?) stellt einen (.+?) fertig!$/))) { verb = 'fertig!'; cls = 'done'; }
+      if (!m) return;
+      const who = g.players.findIndex(p => p.name === m[1]);
+      if (who < 0 || who === me()) return;
+      const panel = app.querySelector(`.opp[data-player="${who}"]`);
+      if (!panel) return;
+      const t = typeByName(m[2]);
+      const icon = cls === 'done' ? '🍔' : t ? A.cardArt(t, 22) : '';
+      setTimeout(() => {
+        const r = panel.getBoundingClientRect();
+        const el = document.createElement('div');
+        el.className = `move-chip ${cls}`;
+        el.innerHTML = `${icon}<span><b>${esc(m[2])}</b> ${verb}</span>`;
+        el.style.left = `${Math.min(window.innerWidth - 190, Math.max(6, r.left + 10))}px`;
+        el.style.top = `${r.top + r.height - 18}px`;
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 2300);
+      }, k * 450);
+    });
   }
 
   async function share() {
